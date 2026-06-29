@@ -58,4 +58,13 @@ final class ArgumentBuilderTests: XCTestCase {
             "-c:a", "libopus", "/out.webm"
         ])
     }
+
+    func testGIF_MinimalArgs_NoCodecNoAudio() {
+        // GIF: ffmpeg's gif muxer auto-selects the encoder; audio must be stripped.
+        let s = ConversionSettings(container: .gif, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mp4", output: "/out.gif", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mp4", "-an", "/out.gif"
+        ])
+    }
 }

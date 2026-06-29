@@ -6,6 +6,11 @@ public enum ArgumentBuilder {
     }
 
     public static func build(settings s: ConversionSettings, input: String, output: String, source: MediaInfo) -> [String] {
+        // GIF: let ffmpeg's gif muxer auto-select the encoder; strip audio; no codec/crf/tag flags.
+        if s.container == .gif {
+            return ["-hide_banner", "-y", "-i", input, "-an", output]
+        }
+
         var args = ["-hide_banner", "-y", "-i", input]
         let mp4Family: Set<Container> = [.mp4, .mov, .m4v]
 

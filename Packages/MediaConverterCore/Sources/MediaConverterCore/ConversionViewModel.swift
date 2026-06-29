@@ -71,6 +71,11 @@ public final class ConversionViewModel: ObservableObject {
         for index in items.indices {
             guard !cancelRequested else { break }
             guard case .ready = items[index].status, let info = items[index].info else { continue }
+            // Pre-flight: reject unsupported codec/container combinations before invoking ffmpeg.
+            guard CodecCompatibility.isValidCombo(settings) else {
+                items[index].status = .failed("This codec/container combination isn't supported")
+                continue
+            }
             let input = items[index].url
             let output = OutputNamer.outputURL(forInput: input, container: settings.container, fileExists: fileExists)
             items[index].status = .converting
@@ -87,6 +92,28 @@ public final class ConversionViewModel: ObservableObject {
                 items[index].status = .failed(Self.message(for: error))
             }
         }
+    }
+
+    /// Called when the container picker changes. Resets any codec that is incompatible
+    /// with the new container to the first valid option, then normalises CRF.
+    public func containerChanged() {
+        let validVideo = CodecCompatibility.videoCodecs(for: settings.container)
+        if !validVideo.contains(settings.videoCodec) {
+            settings.videoCodec = validVideo[0]
+        }
+        let validAudio = CodecCompatibility.audioCodecs(for: settings.container)
+        if !validAudio.contains(settings.audioCodec) {
+            settings.audioCodec = validAudio[0]
+        }
+        videoCodecChanged()
+    }
+
+    /// Called when the video codec picker changes. Resets CRF to the new codec's default
+    /// and clamps it within the codec's valid range.
+    public func videoCodecChanged() {
+        let range = settings.videoCodec.crfRange
+        settings.crf = settings.videoCodec.defaultCRF
+        settings.crf = min(max(settings.crf, range.lowerBound), range.upperBound)
     }
 
     public func cancel() {

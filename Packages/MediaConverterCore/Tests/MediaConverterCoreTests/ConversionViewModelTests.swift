@@ -63,6 +63,74 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.compatibility.isCompatible)
     }
 
+    // MARK: - Codec compatibility pre-flight
+
+    /// An invalid codec/container combo must set status to .failed and NOT invoke the engine.
+    func testInvalidComboSkipsEngineAndFails() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mp4")])
+        // vp9 is not valid for mp4
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .vp9, audioCodec: .aac, crf: 31)
+
+        await vm.convertAll()
+
+        XCTAssertEqual(engine.convertCount, 0, "engine must not be called for invalid combo")
+        guard case .failed(let msg) = vm.items[0].status else {
+            return XCTFail("expected .failed, got \(vm.items[0].status)")
+        }
+        XCTAssertTrue(msg.contains("supported"), "failure message should mention 'supported'; got: \(msg)")
+    }
+
+    // MARK: - containerChanged / videoCodecChanged
+
+    /// Switching to webm must reset h264→vp9 (first valid video) and aac→opus (first valid audio).
+    func testContainerChangedToWebMResetsCodecs() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        // Start with mp4 settings (h264 / aac)
+        vm.settings = ConversionSettings(container: .webm, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        vm.containerChanged()
+        XCTAssertEqual(vm.settings.videoCodec, .vp9, "h264 is invalid for webm; should reset to vp9")
+        XCTAssertEqual(vm.settings.audioCodec, .opus, "aac is invalid for webm; should reset to opus")
+    }
+
+    /// videoCodecChanged() must set crf to the codec's defaultCRF.
+    func testVideoCodecChangedResetsCRF() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .av1, audioCodec: .aac, crf: 5)
+        vm.videoCodecChanged()
+        XCTAssertEqual(vm.settings.crf, VideoCodec.av1.defaultCRF)
+    }
+
+    /// videoCodecChanged() on a codec with a narrower crfRange must clamp an out-of-range value.
+    func testVideoCodecChangedClampsCRFToRange() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        // Simulate: was av1 (CRF up to 63), switch to h264 (CRF up to 51).
+        // After videoCodecChanged(), crf must equal h264.defaultCRF (23).
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 60)
+        vm.videoCodecChanged()
+        let range = VideoCodec.h264.crfRange
+        XCTAssertTrue(range.contains(vm.settings.crf), "CRF \(vm.settings.crf) out of range \(range)")
+        XCTAssertEqual(vm.settings.crf, VideoCodec.h264.defaultCRF)
+    }
+
     /// Regression: cancel() during the first item must stop the whole batch.
     /// The engine's hook fires on the first convert call and triggers vm.cancel();
     /// subsequent items must never reach the engine (convertCount stays at 1)
