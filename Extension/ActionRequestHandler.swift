@@ -16,21 +16,20 @@ final class ActionRequestHandler: NSObject, NSExtensionRequestHandling {
         let lock = NSLock()
         var urls: [URL] = []
 
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        for provider in providers {
+            // Finder supplies each item typed as the file's content UTI (e.g. public.mpeg-4),
+            // NOT public.file-url — so load the original file in place using a type the
+            // provider actually registers. loadInPlaceFileRepresentation yields the original
+            // file URL (inPlace), which is what we want so the app converts the real file.
+            guard let typeID = provider.registeredTypeIdentifiers.first else { continue }
             group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+            provider.loadInPlaceFileRepresentation(forTypeIdentifier: typeID) { url, _, error in
                 defer { group.leave() }
                 if let error {
-                    self.log.error("loadItem failed: \(error.localizedDescription, privacy: .public)")
+                    self.log.error("loadInPlace failed: \(error.localizedDescription, privacy: .public)")
                 }
-                let resolved: URL?
-                switch item {
-                case let u as URL: resolved = u
-                case let data as Data: resolved = URL(dataRepresentation: data, relativeTo: nil)
-                default: resolved = nil
-                }
-                if let resolved, resolved.isFileURL {
-                    lock.lock(); urls.append(resolved); lock.unlock()
+                if let url, url.isFileURL {
+                    lock.lock(); urls.append(url); lock.unlock()
                 }
             }
         }

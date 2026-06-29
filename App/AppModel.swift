@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import MediaConverterCore
 
 @MainActor
@@ -18,6 +19,20 @@ final class AppModel {
                 engine: NoopEngine(),
                 probe: { _ in MediaInfo() },
                 toolsAvailable: false)
+        }
+    }
+
+    /// Load opened files into the shared view model and bring the window forward.
+    /// Called from BOTH SwiftUI's `.onOpenURL` (where macOS actually delivers the URLs)
+    /// and `NSApplicationDelegate.application(_:open:)` (a fallback that receives an empty
+    /// array on current macOS). `loadFiles` de-duplicates by URL, so overlapping delivery
+    /// from both paths never double-loads a file.
+    func handleOpen(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        Task { @MainActor in
+            await viewModel.loadFiles(urls)
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first(where: { $0.canBecomeKey })?.makeKeyAndOrderFront(nil)
         }
     }
 }

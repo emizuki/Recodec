@@ -11,6 +11,8 @@ struct MediaConverterApp: App {
         WindowGroup {
             ContentView(viewModel: viewModel)
                 .frame(minWidth: 420, minHeight: 460)
+                // macOS delivers opened files (from the Quick Action / "Open With") here.
+                .onOpenURL { AppModel.shared.handleOpen([$0]) }
         }
         .windowResizability(.contentSize)
     }
