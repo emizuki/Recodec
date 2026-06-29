@@ -28,10 +28,17 @@ targets:
             CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate
             LSItemContentTypes: [public.audio]
+        NSServices:
+          - NSMenuItem:
+              default: Convert Media
+            NSMessage: convertMedia
+            NSPortName: MediaConverter
+            NSSendFileTypes:
+              - public.movie
+              - public.audiovisual-content
+              - public.audio
     dependencies:
       - package: MediaConverterCore
-      - target: ConvertQuickAction
-        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.MediaConverter
@@ -41,37 +48,3 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
-  ConvertQuickAction:
-    type: app-extension
-    platform: macOS
-    sources: [Extension]
-    dependencies:
-      - package: MediaConverterCore
-    info:
-      path: Extension/Info.plist
-      properties:
-        CFBundleDisplayName: Convert Media
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.services
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ActionRequestHandler
-          NSExtensionAttributes:
-            NSExtensionServiceRoleType: NSExtensionServiceRoleTypeEditor
-            NSExtensionServiceAllowsFinderPreviewItem: true
-            NSExtensionServiceFinderPreviewLabel: Convert Media
-            NSExtensionServiceFinderPreviewIconName: NSActionTemplate
-            NSExtensionServiceToolbarPaletteLabel: Convert Media
-            NSExtensionActivationRule: >-
-              SUBQUERY(extensionItems, $item,
-                SUBQUERY($item.attachments, $att,
-                  ANY $att.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audiovisual-content"
-                  OR ANY $att.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio"
-                ).@count == $item.attachments.@count
-              ).@count == extensionItems.@count
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.MediaConverter.ConvertQuickAction
-        CODE_SIGN_ENTITLEMENTS: Extension/ConvertQuickAction.entitlements
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
-        SWIFT_VERSION: "5.0"
-        SKIP_INSTALL: NO

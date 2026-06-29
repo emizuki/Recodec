@@ -29,11 +29,18 @@ final class AppModel {
     /// from both paths never double-loads a file.
     func handleOpen(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
+        // Activate NOW, while we're still in the user-action context. Deferring this until
+        // after the async probe lets macOS hand focus back to Finder first.
+        activateAndFront()
         Task { @MainActor in
             await viewModel.loadFiles(urls)
-            NSApp.activate(ignoringOtherApps: true)
-            NSApp.windows.first(where: { $0.canBecomeKey })?.makeKeyAndOrderFront(nil)
+            activateAndFront()   // again, in case the window was created during launch
         }
+    }
+
+    private func activateAndFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first(where: { $0.canBecomeKey })?.makeKeyAndOrderFront(nil)
     }
 }
 
