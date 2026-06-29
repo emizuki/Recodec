@@ -29,17 +29,21 @@ final class AppModel {
     /// from both paths never double-loads a file.
     func handleOpen(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
-        // Activate NOW, while we're still in the user-action context. Deferring this until
-        // after the async probe lets macOS hand focus back to Finder first.
-        activateAndFront()
         Task { @MainActor in
             await viewModel.loadFiles(urls)
-            activateAndFront()   // again, in case the window was created during launch
+            bringToFront()
         }
     }
 
-    private func activateAndFront() {
+    private func bringToFront() {
+        // An already-running app activates fine. But a COLD launch via a Service starts the
+        // app in the background, where macOS 14+ cooperative activation ignores a self
+        // `activate()` (Finder, the foreground app, won't yield). "Opening" our own bundle is
+        // a foreground launch request the system honors in that case, unlike a bare activate.
         NSApp.activate(ignoringOtherApps: true)
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config, completionHandler: nil)
         NSApp.windows.first(where: { $0.canBecomeKey })?.makeKeyAndOrderFront(nil)
     }
 }
