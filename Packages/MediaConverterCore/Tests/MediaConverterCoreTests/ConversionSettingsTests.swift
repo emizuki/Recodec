@@ -28,7 +28,23 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertEqual(s.container, .mp4)
         XCTAssertEqual(s.videoCodec, .hevc)
         XCTAssertEqual(s.audioCodec, .aac)
-        XCTAssertEqual(s.preset, .medium)
+        XCTAssertEqual(s.preset, .slow)
+        XCTAssertEqual(s.crf, 25)
+    }
+
+    func testQualityMatchedDefaultCRF() {
+        XCTAssertEqual(VideoCodec.h264.defaultCRF, 20)
+        XCTAssertEqual(VideoCodec.hevc.defaultCRF, 25)
+        XCTAssertEqual(VideoCodec.av1.defaultCRF, 28)
+        XCTAssertEqual(VideoCodec.vp9.defaultCRF, 28)
+    }
+
+    func testDefaultsAreSlowAndCRF25() {
+        let s = ConversionSettings.iPhoneDefault
+        XCTAssertEqual(s.crf, 25)
+        XCTAssertEqual(s.preset, .slow)
+        // unspecified preset also defaults to slow
+        XCTAssertEqual(ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20).preset, .slow)
     }
 
     func testEncoderPresetSVTAV1Mapping() {

@@ -9,7 +9,7 @@ final class ArgumentBuilderTests: XCTestCase {
         let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: src)
         XCTAssertEqual(args, [
             "-hide_banner", "-y", "-i", "/in.mov",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p", "-profile:v", "high",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-pix_fmt", "yuv420p", "-profile:v", "high",
             "-c:a", "aac",
             "-movflags", "+faststart", "/out.mp4"
         ])

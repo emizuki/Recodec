@@ -72,11 +72,11 @@ public enum VideoCodec: String, CaseIterable, Sendable {
     }
     public var defaultCRF: Int {
         switch self {
-        case .h264: return 23
-        case .hevc: return 28
-        case .av1:  return 30
-        case .vp9:  return 31
-        case .copy, .none: return 23
+        case .h264: return 20
+        case .hevc: return 25
+        case .av1:  return 28
+        case .vp9:  return 28
+        case .copy, .none: return 20
         }
     }
     public var crfRange: ClosedRange<Int> {
@@ -157,7 +157,7 @@ public struct ConversionSettings: Sendable, Equatable {
     public init(container: Container, videoCodec: VideoCodec, audioCodec: AudioCodec,
                 crf: Int, channels: AudioChannels = .source,
                 audioBitrate: AudioBitrate = .auto, useHardware: Bool = false,
-                preset: EncoderPreset = .medium) {
+                preset: EncoderPreset = .slow) {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -169,5 +169,5 @@ public struct ConversionSettings: Sendable, Equatable {
     }
 
     public static let iPhoneDefault = ConversionSettings(
-        container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 28)
+        container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25)
 }
