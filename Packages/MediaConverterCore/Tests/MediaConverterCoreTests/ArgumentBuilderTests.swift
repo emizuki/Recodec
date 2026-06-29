@@ -9,7 +9,29 @@ final class ArgumentBuilderTests: XCTestCase {
         let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: src)
         XCTAssertEqual(args, [
             "-hide_banner", "-y", "-i", "/in.mov",
-            "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p", "-profile:v", "high",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p", "-profile:v", "high",
+            "-c:a", "aac",
+            "-movflags", "+faststart", "/out.mp4"
+        ])
+    }
+
+    func testAV1SoftwarePresetMapsToNumber() {
+        let s = ConversionSettings(container: .mp4, videoCodec: .av1, audioCodec: .aac, crf: 30, preset: .slow)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mp4", output: "/out.mp4", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mp4",
+            "-c:v", "libsvtav1", "-preset", "4", "-crf", "30",
+            "-c:a", "aac",
+            "-movflags", "+faststart", "/out.mp4"
+        ])
+    }
+
+    func testH265SoftwareUsesNamedPreset() {
+        let s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 28, preset: .veryslow)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mov",
+            "-c:v", "libx265", "-preset", "veryslow", "-crf", "28", "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
             "-c:a", "aac",
             "-movflags", "+faststart", "/out.mp4"
         ])

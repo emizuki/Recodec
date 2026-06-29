@@ -11,6 +11,28 @@ public enum Container: String, CaseIterable, Sendable {
     }
 }
 
+public enum EncoderPreset: String, CaseIterable, Sendable {
+    case ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+
+    /// x264/x265 use the case name directly.
+    public var x264Name: String { rawValue }
+
+    /// SVT-AV1 uses a numeric preset (0 = slowest/best … 13 = fastest).
+    public var svtAV1Value: Int {
+        switch self {
+        case .ultrafast: return 13
+        case .superfast: return 12
+        case .veryfast:  return 10
+        case .faster:    return 9
+        case .fast:      return 8
+        case .medium:    return 6
+        case .slow:      return 4
+        case .slower:    return 3
+        case .veryslow:  return 2
+        }
+    }
+}
+
 public enum VideoCodec: String, CaseIterable, Sendable {
     case h264, hevc, av1, vp9, copy, none
 
@@ -44,6 +66,10 @@ public enum VideoCodec: String, CaseIterable, Sendable {
     }
     public var isIPhoneReady: Bool { self == .h264 || self == .hevc }
     public var supportsCRF: Bool { self != .copy && self != .none }
+    /// Whether this codec accepts an encoder preset (software x264/x265/SVT-AV1).
+    public var supportsPreset: Bool {
+        switch self { case .h264, .hevc, .av1: return true; default: return false }
+    }
     public var defaultCRF: Int {
         switch self {
         case .h264: return 23
@@ -123,10 +149,12 @@ public struct ConversionSettings: Sendable, Equatable {
     public var channels: AudioChannels
     public var audioBitrate: AudioBitrate
     public var useHardware: Bool
+    public var preset: EncoderPreset
 
     public init(container: Container, videoCodec: VideoCodec, audioCodec: AudioCodec,
                 crf: Int, channels: AudioChannels = .source,
-                audioBitrate: AudioBitrate = .auto, useHardware: Bool = false) {
+                audioBitrate: AudioBitrate = .auto, useHardware: Bool = false,
+                preset: EncoderPreset = .medium) {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -134,6 +162,7 @@ public struct ConversionSettings: Sendable, Equatable {
         self.channels = channels
         self.audioBitrate = audioBitrate
         self.useHardware = useHardware
+        self.preset = preset
     }
 
     public static let iPhoneDefault = ConversionSettings(

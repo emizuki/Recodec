@@ -28,5 +28,21 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertEqual(s.container, .mp4)
         XCTAssertEqual(s.videoCodec, .hevc)
         XCTAssertEqual(s.audioCodec, .aac)
+        XCTAssertEqual(s.preset, .medium)
+    }
+
+    func testEncoderPresetSVTAV1Mapping() {
+        XCTAssertEqual(EncoderPreset.slow.svtAV1Value, 4)
+        XCTAssertEqual(EncoderPreset.medium.svtAV1Value, 6)
+        XCTAssertEqual(EncoderPreset.veryslow.svtAV1Value, 2)
+    }
+
+    func testVideoCodecSupportsPreset() {
+        XCTAssertTrue(VideoCodec.h264.supportsPreset)
+        XCTAssertTrue(VideoCodec.hevc.supportsPreset)
+        XCTAssertTrue(VideoCodec.av1.supportsPreset)
+        XCTAssertFalse(VideoCodec.vp9.supportsPreset)
+        XCTAssertFalse(VideoCodec.copy.supportsPreset)
+        XCTAssertFalse(VideoCodec.none.supportsPreset)
     }
 }

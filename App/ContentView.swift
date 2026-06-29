@@ -100,6 +100,16 @@ struct ContentView: View {
                     }
                 }
             }
+            if viewModel.settings.videoCodec.supportsPreset {
+                GridRow {
+                    Text("Preset")
+                    Picker("", selection: $viewModel.settings.preset) {
+                        ForEach(EncoderPreset.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+                    }
+                    .labelsHidden()
+                    .disabled(viewModel.settings.useHardware)
+                }
+            }
             GridRow {
                 Text("Channels")
                 Picker("", selection: $viewModel.settings.channels) {

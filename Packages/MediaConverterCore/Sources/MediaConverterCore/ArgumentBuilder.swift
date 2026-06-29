@@ -27,7 +27,15 @@ public enum ArgumentBuilder {
             if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
                 args += ["-c:v", hw, "-q:v", String(videoToolboxQuality(fromCRF: s.crf))]
             } else if let sw = s.videoCodec.softwareEncoder {
-                args += ["-c:v", sw, "-crf", String(s.crf)]
+                args += ["-c:v", sw]
+                if s.videoCodec.supportsPreset {
+                    if s.videoCodec == .av1 {
+                        args += ["-preset", String(s.preset.svtAV1Value)]
+                    } else {
+                        args += ["-preset", s.preset.x264Name]
+                    }
+                }
+                args += ["-crf", String(s.crf)]
                 if s.videoCodec == .vp9 { args += ["-b:v", "0"] }
             }
             if s.videoCodec == .h264 || s.videoCodec == .hevc {
