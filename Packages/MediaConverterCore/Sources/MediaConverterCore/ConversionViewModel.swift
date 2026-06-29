@@ -33,6 +33,7 @@ public final class ConversionViewModel: ObservableObject {
     private let engine: ConversionEngineProtocol
     private let probe: (URL) async throws -> MediaInfo
     private let fileExists: (URL) -> Bool
+    private var cancelRequested = false
 
     public init(engine: ConversionEngineProtocol,
                 probe: @escaping (URL) async throws -> MediaInfo,
@@ -64,9 +65,11 @@ public final class ConversionViewModel: ObservableObject {
     }
 
     public func convertAll() async {
+        cancelRequested = false
         isConverting = true
         defer { isConverting = false }
         for index in items.indices {
+            guard !cancelRequested else { break }
             guard case .ready = items[index].status, let info = items[index].info else { continue }
             let input = items[index].url
             let output = OutputNamer.outputURL(forInput: input, container: settings.container, fileExists: fileExists)
@@ -87,6 +90,7 @@ public final class ConversionViewModel: ObservableObject {
     }
 
     public func cancel() {
+        cancelRequested = true
         engine.cancel()
     }
 
