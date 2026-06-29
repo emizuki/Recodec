@@ -2,6 +2,7 @@ import SwiftUI
 import MediaConverterCore
 
 @main
+@MainActor
 struct MediaConverterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var viewModel = AppModel.shared.viewModel
