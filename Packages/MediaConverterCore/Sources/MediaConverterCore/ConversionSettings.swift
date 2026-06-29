@@ -138,7 +138,10 @@ public enum AudioBitrate: Sendable, Equatable, Hashable {
         case .kbps(let k):   return "\(k)k"
         }
     }
-    public static let presets: [AudioBitrate] = [.auto, .kbps(96), .kbps(128), .kbps(160), .kbps(192), .kbps(256), .kbps(320)]
+    public static let presets: [AudioBitrate] = [
+        .auto, .kbps(96), .kbps(128), .kbps(160), .kbps(192), .kbps(256),
+        .kbps(320), .kbps(384), .kbps(448), .kbps(512), .kbps(640),
+    ]
 }
 
 public struct ConversionSettings: Sendable, Equatable {

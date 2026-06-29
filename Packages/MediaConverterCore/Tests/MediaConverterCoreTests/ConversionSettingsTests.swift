@@ -51,4 +51,10 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertFalse(VideoCodec.copy.supportsPreset)
         XCTAssertFalse(VideoCodec.none.supportsPreset)
     }
+
+    func testAudioBitratePresetsUpTo640() {
+        let kbps = AudioBitrate.presets.compactMap { if case .kbps(let k) = $0 { return k } else { return nil } }
+        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640])
+        XCTAssertEqual(AudioBitrate.presets.first, .auto)
+    }
 }
