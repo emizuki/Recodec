@@ -50,6 +50,7 @@ public final class ConversionViewModel: ObservableObject {
     }
 
     public func loadFiles(_ urls: [URL]) async {
+        let wasEmpty = items.isEmpty
         for url in urls where !items.contains(where: { $0.url == url }) {
             items.append(InputItem(url: url))
             let index = items.count - 1
@@ -61,6 +62,10 @@ public final class ConversionViewModel: ObservableObject {
             } catch {
                 items[index].status = .failed("Couldn't read this file")
             }
+        }
+        // On a fresh load (list was empty), default the audio codec from the first source.
+        if wasEmpty, let first = items.first?.info {
+            settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
         }
     }
 

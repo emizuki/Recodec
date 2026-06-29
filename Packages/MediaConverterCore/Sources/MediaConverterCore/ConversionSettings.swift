@@ -171,3 +171,11 @@ public struct ConversionSettings: Sendable, Equatable {
     public static let iPhoneDefault = ConversionSettings(
         container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25)
 }
+
+extension ConversionSettings {
+    /// Audio codec to default to for a freshly-loaded source: Copy when the source audio is
+    /// already AAC (avoid a needless re-encode), otherwise AAC.
+    public static func recommendedAudioCodec(forSource source: MediaInfo) -> AudioCodec {
+        source.audioCodecName == "aac" ? .copy : .aac
+    }
+}

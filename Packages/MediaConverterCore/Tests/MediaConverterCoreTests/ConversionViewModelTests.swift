@@ -201,4 +201,33 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(engine.convertCount, 2, "second Convert must re-run, not no-op on .done items")
         guard case .done = vm.items[0].status else { return XCTFail("expected .done after second convert") }
     }
+
+    // MARK: - Source-aware default audio codec
+
+    func testRecommendedAudioCodec() {
+        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: "aac")), .copy)
+        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: "mp3")), .aac)
+        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: nil)), .aac)
+    }
+
+    func testFreshLoadSetsAudioDefaultFromSource() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true, fileExists: { _ in false })
+        XCTAssertEqual(vm.settings.audioCodec, .aac)            // static default before load
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+        XCTAssertEqual(vm.settings.audioCodec, .copy)           // source is aac → Copy on fresh load
+    }
+
+    func testSecondLoadDoesNotOverrideAudio() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true, fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])    // → .copy
+        vm.settings.audioCodec = .mp3                            // user override
+        await vm.loadFiles([URL(fileURLWithPath: "/b.mov")])    // not a fresh load
+        XCTAssertEqual(vm.settings.audioCodec, .mp3, "subsequent loads must not override the user's audio choice")
+    }
 }
