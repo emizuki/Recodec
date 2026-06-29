@@ -178,4 +178,27 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.items[1].status, .ready, "second item should remain .ready — loop must have broken")
         XCTAssertEqual(vm.items[2].status, .ready, "third item should remain .ready — loop must have broken")
     }
+
+    /// Regression (found in manual QA): after a successful conversion an item is .done.
+    /// Pressing Convert again — e.g. after changing the codec — must re-run the conversion,
+    /// not silently no-op. convertAll() previously only processed .ready items.
+    func testConvertAllRerunsAfterDone() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+        await vm.convertAll()
+        XCTAssertEqual(engine.convertCount, 1)
+        guard case .done = vm.items[0].status else { return XCTFail("expected .done after first convert") }
+
+        // User changes the codec and presses Convert again — must re-run, not no-op.
+        vm.settings.videoCodec = .hevc
+        await vm.convertAll()
+        XCTAssertEqual(engine.convertCount, 2, "second Convert must re-run, not no-op on .done items")
+        guard case .done = vm.items[0].status else { return XCTFail("expected .done after second convert") }
+    }
 }

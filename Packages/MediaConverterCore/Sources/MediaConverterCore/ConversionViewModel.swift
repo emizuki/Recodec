@@ -70,7 +70,10 @@ public final class ConversionViewModel: ObservableObject {
         defer { isConverting = false }
         for index in items.indices {
             guard !cancelRequested else { break }
-            guard case .ready = items[index].status, let info = items[index].info else { continue }
+            // Convert any successfully-probed item, regardless of prior status: a .done or
+            // .failed item must be re-convertible so pressing Convert again (e.g. after
+            // changing the codec) re-runs it. Items that failed to probe have no info → skip.
+            guard let info = items[index].info else { continue }
             // Pre-flight: reject unsupported codec/container combinations before invoking ffmpeg.
             guard CodecCompatibility.isValidCombo(settings) else {
                 items[index].status = .failed("This codec/container combination isn't supported")
