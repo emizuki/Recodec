@@ -21,6 +21,15 @@ targets:
         CFBundleDisplayName: Media Converter
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Movie
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.movie, public.audiovisual-content]
+          - CFBundleTypeName: Audio
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.audio]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.MediaConverter
