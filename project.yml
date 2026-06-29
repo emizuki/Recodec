@@ -1,0 +1,32 @@
+name: MediaConverter
+options:
+  bundleIdPrefix: com.emizuki
+  deploymentTarget:
+    macOS: "13.0"
+packages:
+  MediaConverterCore:
+    path: Packages/MediaConverterCore
+targets:
+  MediaConverter:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: MediaConverterCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: MediaConverter
+        CFBundleDisplayName: Media Converter
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.MediaConverter
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
