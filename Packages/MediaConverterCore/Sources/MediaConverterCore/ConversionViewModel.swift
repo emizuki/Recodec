@@ -64,7 +64,7 @@ public final class ConversionViewModel: ObservableObject {
             }
         }
         // On a fresh load (list was empty), default the audio codec from the first source.
-        if wasEmpty, let first = items.first?.info {
+        if wasEmpty, let first = items.compactMap({ $0.info }).first {
             settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
         }
     }

@@ -230,4 +230,16 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.loadFiles([URL(fileURLWithPath: "/b.mov")])    // not a fresh load
         XCTAssertEqual(vm.settings.audioCodec, .mp3, "subsequent loads must not override the user's audio choice")
     }
+
+    func testFreshLoadUsesFirstProbedSourceWhenFirstFileFails() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                if url.lastPathComponent == "bad.mov" { throw NSError(domain: "test", code: 1) }
+                return MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac")
+            },
+            toolsAvailable: true, fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/bad.mov"), URL(fileURLWithPath: "/good.mov")])
+        XCTAssertEqual(vm.settings.audioCodec, .copy)
+    }
 }
