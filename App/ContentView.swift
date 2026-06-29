@@ -213,7 +213,7 @@ struct ContentView: View {
     }
     private func label(_ b: AudioBitrate) -> String {
         switch b {
-        case .auto:         return "Auto (≈128k AAC)"
+        case .auto:         return "Auto (encoder default)"
         case .kbps(let k):  return "\(k) kbps"
         }
     }
