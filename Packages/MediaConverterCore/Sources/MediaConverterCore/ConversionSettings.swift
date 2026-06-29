@@ -1,10 +1,12 @@
 import Foundation
 
 public enum Container: String, CaseIterable, Sendable {
-    case mp4, mov, m4v, mkv, webm, m4a, mp3, gif
+    case mp4, mov, m4v, mkv, webm, m4a, mp3, gif, flac, wav
 
     public var fileExtension: String { rawValue }
-    public var isAudioOnly: Bool { self == .m4a || self == .mp3 }
+    public var isAudioOnly: Bool {
+        switch self { case .m4a, .mp3, .flac, .wav: return true; default: return false }
+    }
     /// mp4/mov family supports the `+faststart` movflag.
     public var supportsFaststart: Bool {
         switch self { case .mp4, .mov, .m4v, .m4a: return true; default: return false }
@@ -33,39 +35,62 @@ public enum EncoderPreset: String, CaseIterable, Sendable {
     }
 }
 
+/// ProRes uses discrete profiles instead of a CRF/quality scale.
+public enum ProResProfile: String, CaseIterable, Sendable {
+    case proxy, lt, standard, hq, prores4444
+
+    /// `-profile:v` value for prores_ks / prores_videotoolbox.
+    public var ffmpegValue: Int {
+        switch self {
+        case .proxy:      return 0
+        case .lt:         return 1
+        case .standard:   return 2
+        case .hq:         return 3
+        case .prores4444: return 4
+        }
+    }
+}
+
 public enum VideoCodec: String, CaseIterable, Sendable {
-    case h264, hevc, av1, vp9, copy, none
+    case h264, hevc, av1, vp9, prores, copy, none
 
     /// Re-encode software encoder (nil for copy/none).
     public var softwareEncoder: String? {
         switch self {
-        case .h264: return "libx264"
-        case .hevc: return "libx265"
-        case .av1:  return "libsvtav1"
-        case .vp9:  return "libvpx-vp9"
+        case .h264:   return "libx264"
+        case .hevc:   return "libx265"
+        case .av1:    return "libsvtav1"
+        case .vp9:    return "libvpx-vp9"
+        case .prores: return "prores_ks"
         case .copy, .none: return nil
         }
     }
     /// VideoToolbox hardware encoder where available.
     public var hardwareEncoder: String? {
         switch self {
-        case .h264: return "h264_videotoolbox"
-        case .hevc: return "hevc_videotoolbox"
-        default:    return nil
+        case .h264:   return "h264_videotoolbox"
+        case .hevc:   return "hevc_videotoolbox"
+        case .prores: return "prores_videotoolbox"
+        default:      return nil
         }
     }
     /// ffprobe-style codec name for compatibility checks (nil for copy/none).
     public var canonicalName: String? {
         switch self {
-        case .h264: return "h264"
-        case .hevc: return "hevc"
-        case .av1:  return "av1"
-        case .vp9:  return "vp9"
+        case .h264:   return "h264"
+        case .hevc:   return "hevc"
+        case .av1:    return "av1"
+        case .vp9:    return "vp9"
+        case .prores: return "prores"
         case .copy, .none: return nil
         }
     }
     public var isIPhoneReady: Bool { self == .h264 || self == .hevc }
-    public var supportsCRF: Bool { self != .copy && self != .none }
+    /// CRF applies to the quality-controlled software encoders; ProRes uses a profile,
+    /// copy/none use nothing.
+    public var supportsCRF: Bool {
+        switch self { case .copy, .none, .prores: return false; default: return true }
+    }
     /// Whether this codec accepts an encoder preset (software x264/x265/SVT-AV1).
     public var supportsPreset: Bool {
         switch self { case .h264, .hevc, .av1: return true; default: return false }
@@ -76,7 +101,7 @@ public enum VideoCodec: String, CaseIterable, Sendable {
         case .hevc: return 25
         case .av1:  return 28
         case .vp9:  return 28
-        case .copy, .none: return 20
+        case .prores, .copy, .none: return 20
         }
     }
     public var crfRange: ClosedRange<Int> {
@@ -88,7 +113,7 @@ public enum VideoCodec: String, CaseIterable, Sendable {
 }
 
 public enum AudioCodec: String, CaseIterable, Sendable {
-    case aac, mp3, alac, opus, copy, none
+    case aac, mp3, alac, opus, flac, pcm, ac3, eac3, copy, none
 
     public var encoder: String? {
         switch self {
@@ -96,6 +121,10 @@ public enum AudioCodec: String, CaseIterable, Sendable {
         case .mp3:  return "libmp3lame"
         case .alac: return "alac"
         case .opus: return "libopus"
+        case .flac: return "flac"
+        case .pcm:  return "pcm_s16le"
+        case .ac3:  return "ac3"
+        case .eac3: return "eac3"
         case .copy, .none: return nil
         }
     }
@@ -105,12 +134,18 @@ public enum AudioCodec: String, CaseIterable, Sendable {
         case .mp3:  return "mp3"
         case .alac: return "alac"
         case .opus: return "opus"
+        case .flac: return "flac"
+        case .pcm:  return "pcm_s16le"
+        case .ac3:  return "ac3"
+        case .eac3: return "eac3"
         case .copy, .none: return nil
         }
     }
     public var isIPhoneReady: Bool { self == .aac || self == .mp3 || self == .alac }
-    /// ALAC is lossless (bitrate ignored); copy/none have no bitrate.
-    public var supportsBitrate: Bool { self == .aac || self == .mp3 || self == .opus }
+    /// Lossy codecs take a bitrate; lossless (alac/flac), uncompressed (pcm), and copy/none do not.
+    public var supportsBitrate: Bool {
+        switch self { case .aac, .mp3, .opus, .ac3, .eac3: return true; default: return false }
+    }
 }
 
 public enum AudioChannels: String, CaseIterable, Sendable {
@@ -153,11 +188,12 @@ public struct ConversionSettings: Sendable, Equatable {
     public var audioBitrate: AudioBitrate
     public var useHardware: Bool
     public var preset: EncoderPreset
+    public var proResProfile: ProResProfile
 
     public init(container: Container, videoCodec: VideoCodec, audioCodec: AudioCodec,
                 crf: Int, channels: AudioChannels = .source,
                 audioBitrate: AudioBitrate = .auto, useHardware: Bool = false,
-                preset: EncoderPreset = .slow) {
+                preset: EncoderPreset = .slow, proResProfile: ProResProfile = .hq) {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -166,6 +202,7 @@ public struct ConversionSettings: Sendable, Equatable {
         self.audioBitrate = audioBitrate
         self.useHardware = useHardware
         self.preset = preset
+        self.proResProfile = proResProfile
     }
 
     public static let iPhoneDefault = ConversionSettings(

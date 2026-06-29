@@ -130,6 +130,19 @@ public final class ConversionViewModel: ObservableObject {
         engine.cancel()
     }
 
+    /// Remove a single file from the list. No-op while converting (the convert loop is
+    /// index-based, so mutating the list mid-batch is unsafe).
+    public func removeItem(id: UUID) {
+        guard !isConverting else { return }
+        items.removeAll { $0.id == id }
+    }
+
+    /// Remove all files from the list. No-op while converting.
+    public func clearAll() {
+        guard !isConverting else { return }
+        items.removeAll()
+    }
+
     private func updateProgress(at index: Int, to fraction: Double) {
         guard items.indices.contains(index) else { return }
         items[index].progress = fraction

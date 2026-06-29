@@ -36,6 +36,10 @@ struct ContentView: View {
             HStack {
                 Text("Files").font(.headline)
                 Spacer()
+                if !viewModel.items.isEmpty {
+                    Button("Clear All") { viewModel.clearAll() }
+                        .disabled(viewModel.isConverting)
+                }
                 Button("Add Files…") { openPanel() }
             }
             if viewModel.items.isEmpty {
@@ -54,6 +58,13 @@ struct ContentView: View {
                         if case .converting = item.status {
                             ProgressView(value: item.progress).frame(width: 90)
                         }
+                        Button { viewModel.removeItem(id: item.id) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .disabled(viewModel.isConverting)
+                        .help("Remove")
                     }
                 }
             }
@@ -98,6 +109,14 @@ struct ContentView: View {
                                step: 1)
                         Text("CRF \(viewModel.settings.crf)").monospacedDigit().frame(width: 64, alignment: .trailing)
                     }
+                }
+            }
+            if viewModel.settings.videoCodec == .prores {
+                GridRow {
+                    Text("ProRes profile")
+                    Picker("", selection: $viewModel.settings.proResProfile) {
+                        ForEach(ProResProfile.allCases, id: \.self) { Text(label($0)).tag($0) }
+                    }.labelsHidden()
                 }
             }
             if viewModel.settings.videoCodec.supportsPreset {
@@ -189,6 +208,7 @@ struct ContentView: View {
         case .hevc: return "HEVC"
         case .av1:  return "AV1"
         case .vp9:  return "VP9"
+        case .prores: return "ProRes"
         case .copy: return "Copy (passthrough)"
         case .none: return "None"
         }
@@ -199,8 +219,21 @@ struct ContentView: View {
         case .mp3:  return "MP3"
         case .alac: return "ALAC"
         case .opus: return "Opus"
+        case .flac: return "FLAC"
+        case .pcm:  return "PCM (uncompressed)"
+        case .ac3:  return "AC-3 (Dolby)"
+        case .eac3: return "E-AC-3 (Dolby)"
         case .copy: return "Copy (passthrough)"
         case .none: return "None"
+        }
+    }
+    private func label(_ p: ProResProfile) -> String {
+        switch p {
+        case .proxy:      return "Proxy"
+        case .lt:         return "LT"
+        case .standard:   return "422"
+        case .hq:         return "422 HQ"
+        case .prores4444: return "4444"
         }
     }
     private func label(_ c: AudioChannels) -> String {

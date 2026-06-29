@@ -23,6 +23,13 @@ public enum ArgumentBuilder {
             if source.videoCodecName == "hevc", mp4Family.contains(s.container) {
                 args += ["-tag:v", "hvc1"]
             }
+        case .prores:
+            // ProRes uses a discrete profile — no CRF, preset, pixel-format, or tag flags.
+            if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
+                args += ["-c:v", hw, "-profile:v", String(s.proResProfile.ffmpegValue)]
+            } else if let sw = s.videoCodec.softwareEncoder {
+                args += ["-c:v", sw, "-profile:v", String(s.proResProfile.ffmpegValue)]
+            }
         default:
             if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
                 args += ["-c:v", hw, "-q:v", String(videoToolboxQuality(fromCRF: s.crf))]

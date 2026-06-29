@@ -104,4 +104,37 @@ final class CodecCompatibilityTests: XCTestCase {
     func testMP4IncludesAV1Video() {
         XCTAssertTrue(CodecCompatibility.videoCodecs(for: .mp4).contains(.av1))
     }
+
+    // MARK: - New formats (ProRes / FLAC / WAV / AC-3)
+
+    func testProResValidInMOVandMKVNotMP4() {
+        XCTAssertTrue(CodecCompatibility.videoCodecs(for: .mov).contains(.prores))
+        XCTAssertTrue(CodecCompatibility.videoCodecs(for: .mkv).contains(.prores))
+        XCTAssertFalse(CodecCompatibility.videoCodecs(for: .mp4).contains(.prores))
+    }
+
+    func testFLACContainerAcceptsFLACAudioOnly() {
+        XCTAssertEqual(CodecCompatibility.videoCodecs(for: .flac), [.none])
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .flac).contains(.flac))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(
+            ConversionSettings(container: .flac, videoCodec: .none, audioCodec: .flac, crf: 20)))
+    }
+
+    func testWAVContainerAcceptsPCMAudioOnly() {
+        XCTAssertEqual(CodecCompatibility.videoCodecs(for: .wav), [.none])
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .wav).contains(.pcm))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(
+            ConversionSettings(container: .wav, videoCodec: .none, audioCodec: .pcm, crf: 20)))
+    }
+
+    func testAC3andEAC3ValidInMP4AndMKV() {
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mp4).contains(.ac3))
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mkv).contains(.eac3))
+    }
+
+    func testPCMValidInMOVandMKVNotMP4() {
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mov).contains(.pcm))
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mkv).contains(.pcm))
+        XCTAssertFalse(CodecCompatibility.audioCodecs(for: .mp4).contains(.pcm))
+    }
 }

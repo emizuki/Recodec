@@ -242,4 +242,25 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.loadFiles([URL(fileURLWithPath: "/bad.mov"), URL(fileURLWithPath: "/good.mov")])
         XCTAssertEqual(vm.settings.audioCodec, .copy)
     }
+
+    // MARK: - Removing files
+
+    func testRemoveItemAndClearAll() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true, fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov"),
+                            URL(fileURLWithPath: "/b.mov"),
+                            URL(fileURLWithPath: "/c.mov")])
+        XCTAssertEqual(vm.items.count, 3)
+
+        let middle = vm.items[1].id
+        vm.removeItem(id: middle)
+        XCTAssertEqual(vm.items.count, 2)
+        XCTAssertFalse(vm.items.contains { $0.id == middle })
+
+        vm.clearAll()
+        XCTAssertTrue(vm.items.isEmpty)
+    }
 }

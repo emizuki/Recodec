@@ -89,4 +89,59 @@ final class ArgumentBuilderTests: XCTestCase {
             "-hide_banner", "-y", "-i", "/in.mp4", "-an", "/out.gif"
         ])
     }
+
+    func testProResToMOV_ProfileNotCRF() {
+        let s = ConversionSettings(container: .mov, videoCodec: .prores, audioCodec: .aac, crf: 20, proResProfile: .standard)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mov", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mov",
+            "-c:v", "prores_ks", "-profile:v", "2",
+            "-c:a", "aac",
+            "-movflags", "+faststart", "/out.mov"
+        ])
+    }
+
+    func testProResHardwareToMKV() {
+        let s = ConversionSettings(container: .mkv, videoCodec: .prores, audioCodec: .none, crf: 20, useHardware: true, proResProfile: .hq)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mkv", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mov",
+            "-c:v", "prores_videotoolbox", "-profile:v", "3",
+            "-an", "/out.mkv"
+        ])
+    }
+
+    func testFLACAudioOnly_NoBitrate() {
+        let s = ConversionSettings(container: .flac, videoCodec: .none, audioCodec: .flac, crf: 20)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.wav", output: "/out.flac", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.wav",
+            "-vn",
+            "-c:a", "flac",
+            "/out.flac"
+        ])
+    }
+
+    func testWAVPCMAudioOnly() {
+        let s = ConversionSettings(container: .wav, videoCodec: .none, audioCodec: .pcm, crf: 20)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.wav", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mov",
+            "-vn",
+            "-c:a", "pcm_s16le",
+            "/out.wav"
+        ])
+    }
+
+    func testAC3WithBitrateAndChannels() {
+        let s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .ac3, crf: 20,
+                                   channels: .surround51, audioBitrate: .kbps(448))
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: src)
+        XCTAssertEqual(args, [
+            "-hide_banner", "-y", "-i", "/in.mkv",
+            "-c:v", "copy",
+            "-c:a", "ac3", "-b:a", "448k", "-ac", "6",
+            "/out.mkv"
+        ])
+    }
 }
