@@ -99,13 +99,14 @@ public final class ConversionViewModel: ObservableObject {
     public func containerChanged() {
         let validVideo = CodecCompatibility.videoCodecs(for: settings.container)
         if !validVideo.contains(settings.videoCodec) {
-            settings.videoCodec = validVideo[0]
+            if let first = validVideo.first { settings.videoCodec = first }
+            // CRF is codec-specific — only reset it when the codec actually changed.
+            videoCodecChanged()
         }
         let validAudio = CodecCompatibility.audioCodecs(for: settings.container)
         if !validAudio.contains(settings.audioCodec) {
-            settings.audioCodec = validAudio[0]
+            if let first = validAudio.first { settings.audioCodec = first }
         }
-        videoCodecChanged()
     }
 
     /// Called when the video codec picker changes. Resets CRF to the new codec's default

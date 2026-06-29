@@ -142,6 +142,11 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
 
         stdout.fileHandleForReading.readabilityHandler = nil
         stderr.fileHandleForReading.readabilityHandler = nil
+        // Final synchronous drain: bytes written by ffmpeg just before exit may still sit in
+        // the kernel pipe buffer and not yet have been delivered to the readabilityHandler.
+        // This is safe post-exit because the write-end of the pipe is now closed and the
+        // concurrent handler has already been nil'd — no double-read is possible.
+        stderrBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
         let stderrData = stderrBuffer.accumulated
 
         let wasCancelled = state.finishAndWasCancelled()

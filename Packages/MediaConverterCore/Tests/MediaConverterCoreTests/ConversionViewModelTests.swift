@@ -89,7 +89,8 @@ final class ConversionViewModelTests: XCTestCase {
 
     // MARK: - containerChanged / videoCodecChanged
 
-    /// Switching to webm must reset h264→vp9 (first valid video) and aac→opus (first valid audio).
+    /// Switching to webm must reset h264→vp9 (first valid video), aac→opus (first valid audio),
+    /// and CRF to the new codec's default (vp9.defaultCRF) because the codec changed.
     func testContainerChangedToWebMResetsCodecs() {
         let vm = ConversionViewModel(
             engine: FakeEngine(),
@@ -101,6 +102,25 @@ final class ConversionViewModelTests: XCTestCase {
         vm.containerChanged()
         XCTAssertEqual(vm.settings.videoCodec, .vp9, "h264 is invalid for webm; should reset to vp9")
         XCTAssertEqual(vm.settings.audioCodec, .opus, "aac is invalid for webm; should reset to opus")
+        XCTAssertEqual(vm.settings.crf, VideoCodec.vp9.defaultCRF,
+                       "CRF must reset to new codec's default when video codec changes")
+    }
+
+    /// Regression: switching to a container where the current video codec remains valid
+    /// must NOT reset the user's custom CRF. mp4→mkv with h264 is such a case.
+    func testContainerChangedPreservesCRFWhenCodecStaysValid() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        // Custom CRF of 18 (not the h264 default of 23) set under mp4/h264.
+        vm.settings = ConversionSettings(container: .mkv, videoCodec: .h264, audioCodec: .aac, crf: 18)
+        vm.containerChanged()
+        XCTAssertEqual(vm.settings.videoCodec, .h264,
+                       "h264 is valid for mkv; codec must not change")
+        XCTAssertEqual(vm.settings.crf, 18,
+                       "CRF must not reset when the video codec stays valid after a container switch")
     }
 
     /// videoCodecChanged() must set crf to the codec's defaultCRF.

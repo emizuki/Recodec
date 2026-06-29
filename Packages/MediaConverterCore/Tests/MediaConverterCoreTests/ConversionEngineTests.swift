@@ -31,6 +31,30 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertEqual(result.videoCodecName, "hevc")
         XCTAssertGreaterThan(progressBox.max, 0.0)
     }
+
+    /// Regression: when ffmpeg exits with a non-zero status the stderrTail must be
+    /// non-empty — bytes that sat in the kernel pipe buffer after the handler was nil'd
+    /// must be captured by the final synchronous readDataToEndOfFile() call.
+    func testFfmpegFailureHasNonEmptyStderrTail() async throws {
+        let tools = try XCTUnwrap(FFmpegLocator.locate(), "ffmpeg not installed — skipping")
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let nonexistent = dir.appendingPathComponent("nonexistent-\(UUID().uuidString).mp4")
+        let output = dir.appendingPathComponent("out-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: output) }
+
+        let source = MediaInfo()
+        let settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        let engine = FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+
+        do {
+            try await engine.convert(input: nonexistent, output: output,
+                                     settings: settings, source: source) { _ in }
+            XCTFail("Expected ConversionError.ffmpegFailed to be thrown")
+        } catch ConversionError.ffmpegFailed(_, let stderrTail) {
+            XCTAssertFalse(stderrTail.isEmpty,
+                           "stderrTail must not be empty on ffmpeg failure — final pipe drain may be missing")
+        }
+    }
 }
 
 /// Thread-safe progress recorder (callback fires on a background queue).
