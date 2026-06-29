@@ -137,4 +137,17 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mkv).contains(.pcm))
         XCTAssertFalse(CodecCompatibility.audioCodecs(for: .mp4).contains(.pcm))
     }
+
+    func testM4VIsIPodMuxerRestricted() {
+        // .m4v uses ffmpeg's ipod muxer: H.264 video only; AAC/ALAC/AC-3 audio.
+        // Verified empirically — HEVC and MP3 are rejected by that container.
+        let v = CodecCompatibility.videoCodecs(for: .m4v)
+        XCTAssertTrue(v.contains(.h264))
+        XCTAssertFalse(v.contains(.hevc), "ipod muxer rejects HEVC in .m4v")
+        let a = CodecCompatibility.audioCodecs(for: .m4v)
+        XCTAssertTrue(a.contains(.aac))
+        XCTAssertTrue(a.contains(.alac))
+        XCTAssertTrue(a.contains(.ac3))
+        XCTAssertFalse(a.contains(.mp3), "ipod muxer rejects MP3 in .m4v")
+    }
 }
