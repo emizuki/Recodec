@@ -45,6 +45,26 @@ private final class ConversionState: @unchecked Sendable {
     }
 }
 
+/// Accumulates Data chunks appended from a readabilityHandler behind a lock.
+/// Draining stderr concurrently prevents the pipe buffer from filling when ffmpeg
+/// writes more than ~64 KB to stderr, which would cause ffmpeg to block and never exit.
+private final class LockedBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    var accumulated: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
+
 /// Wraps a ProgressParser behind a lock so the readabilityHandler closure can call it
 /// without capturing a mutable variable.
 private final class LockedParser: @unchecked Sendable {
@@ -94,6 +114,15 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
             onProgress(fraction)
         }
 
+        // Drain stderr concurrently so ffmpeg never blocks on a full pipe buffer.
+        // readDataToEndOfFile() after process exit would deadlock if ffmpeg wrote >~64 KB.
+        let stderrBuffer = LockedBuffer()
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            stderrBuffer.append(chunk)
+        }
+
         // Store the process BEFORE run() so cancel() can find it immediately.
         state.begin(process)
 
@@ -104,13 +133,16 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
             do {
                 try process.run()
             } catch {
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
                 process.terminationHandler = nil
                 cont.resume(throwing: error)
             }
         }
 
         stdout.fileHandleForReading.readabilityHandler = nil
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        stderr.fileHandleForReading.readabilityHandler = nil
+        let stderrData = stderrBuffer.accumulated
 
         let wasCancelled = state.finishAndWasCancelled()
         if wasCancelled {
