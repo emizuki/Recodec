@@ -75,8 +75,8 @@ final class ConversionViewModelTests: XCTestCase {
             fileExists: { _ in false })
 
         await vm.loadFiles([URL(fileURLWithPath: "/a.mp4")])
-        // vp9 is not valid for mp4
-        vm.settings = ConversionSettings(container: .mp4, videoCodec: .vp9, audioCodec: .aac, crf: 31)
+        // h264 is not valid for webm (only VP9/AV1) — still invalid after un-hiding MP4 combos
+        vm.settings = ConversionSettings(container: .webm, videoCodec: .h264, audioCodec: .opus, crf: 23)
 
         await vm.convertAll()
 

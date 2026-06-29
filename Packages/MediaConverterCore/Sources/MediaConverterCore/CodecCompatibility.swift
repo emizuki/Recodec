@@ -5,7 +5,7 @@ import Foundation
 public enum CodecCompatibility {
     public static func videoCodecs(for container: Container) -> [VideoCodec] {
         switch container {
-        case .mp4:  return [.h264, .hevc, .av1, .copy, .none]
+        case .mp4:  return [.h264, .hevc, .av1, .vp9, .copy, .none]
         case .mov:  return [.h264, .hevc, .prores, .copy, .none]
         // .m4v uses ffmpeg's restrictive `ipod` muxer: H.264 only (HEVC is rejected even with hvc1).
         case .m4v:  return [.h264, .copy, .none]
@@ -21,17 +21,17 @@ public enum CodecCompatibility {
 
     public static func audioCodecs(for container: Container) -> [AudioCodec] {
         switch container {
-        case .mp4:  return [.aac, .mp3, .alac, .ac3, .eac3, .copy, .none]
+        case .mp4:  return [.aac, .mp3, .alac, .opus, .flac, .pcm, .ac3, .eac3, .copy, .none]
         case .mov:  return [.aac, .mp3, .alac, .ac3, .eac3, .pcm, .copy, .none]
         // .m4v (ipod muxer): AAC/ALAC/AC-3 only — MP3 is rejected by the container.
         case .m4v:  return [.aac, .alac, .ac3, .copy, .none]
         case .mkv:  return [.aac, .mp3, .alac, .opus, .flac, .ac3, .eac3, .pcm, .copy, .none]
         case .webm: return [.opus, .copy, .none]
-        case .m4a:  return [.aac, .alac, .copy, .none]
+        case .m4a:  return [.aac, .alac, .ac3, .copy, .none]
         case .mp3:  return [.mp3, .copy, .none]
         case .gif:  return [.none]
         case .flac: return [.flac, .copy, .none]
-        case .wav:  return [.pcm, .copy, .none]
+        case .wav:  return [.pcm, .aac, .mp3, .flac, .ac3, .eac3, .copy, .none]
         }
     }
 

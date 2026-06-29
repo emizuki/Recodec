@@ -42,14 +42,16 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertFalse(CodecCompatibility.isValidCombo(s))
     }
 
-    func testVP9InMP4IsInvalid() {
+    func testVP9InMP4IsValid() {
+        // ffmpeg muxes VP9 into MP4; we expose every muxable combo.
         let s = ConversionSettings(container: .mp4, videoCodec: .vp9, audioCodec: .aac, crf: 31)
-        XCTAssertFalse(CodecCompatibility.isValidCombo(s))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(s))
     }
 
-    func testOpusInMP4IsInvalid() {
+    func testOpusInMP4IsValid() {
+        // ffmpeg muxes Opus into MP4 (unusual but valid) — exposed.
         let s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .opus, crf: 23)
-        XCTAssertFalse(CodecCompatibility.isValidCombo(s))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(s))
     }
 
     func testM4AWithVideoH264IsInvalid() {
@@ -132,10 +134,19 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mkv).contains(.eac3))
     }
 
-    func testPCMValidInMOVandMKVNotMP4() {
+    func testPCMValidInMP4MOVandMKV() {
+        XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mp4).contains(.pcm))
         XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mov).contains(.pcm))
         XCTAssertTrue(CodecCompatibility.audioCodecs(for: .mkv).contains(.pcm))
-        XCTAssertFalse(CodecCompatibility.audioCodecs(for: .mp4).contains(.pcm))
+    }
+
+    func testMP4ExposesAllMuxableCodecs() {
+        // After un-hiding: ffmpeg muxes these into MP4, so they're offered.
+        XCTAssertTrue(CodecCompatibility.videoCodecs(for: .mp4).contains(.vp9))
+        let a = CodecCompatibility.audioCodecs(for: .mp4)
+        XCTAssertTrue(a.contains(.opus))
+        XCTAssertTrue(a.contains(.flac))
+        XCTAssertTrue(a.contains(.pcm))
     }
 
     func testM4VIsIPodMuxerRestricted() {
