@@ -3,7 +3,7 @@ import XCTest
 
 final class MediaProbeTests: XCTestCase {
     func testProbesGeneratedClip() async throws {
-        let tools = try XCTUnwrap(FFmpegLocator.locate(), "ffmpeg/ffprobe not installed — skipping")
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("probe-\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: tmp) }

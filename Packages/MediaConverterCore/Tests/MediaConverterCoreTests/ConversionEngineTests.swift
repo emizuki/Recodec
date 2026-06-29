@@ -3,7 +3,7 @@ import XCTest
 
 final class ConversionEngineTests: XCTestCase {
     func testConvertsToHEVCAndReportsProgress() async throws {
-        let tools = try XCTUnwrap(FFmpegLocator.locate(), "ffmpeg not installed — skipping")
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         let input = dir.appendingPathComponent("eng-in-\(UUID().uuidString).mp4")
         let output = dir.appendingPathComponent("eng-out-\(UUID().uuidString).mp4")
@@ -36,7 +36,7 @@ final class ConversionEngineTests: XCTestCase {
     /// non-empty — bytes that sat in the kernel pipe buffer after the handler was nil'd
     /// must be captured by the final synchronous readDataToEndOfFile() call.
     func testFfmpegFailureHasNonEmptyStderrTail() async throws {
-        let tools = try XCTUnwrap(FFmpegLocator.locate(), "ffmpeg not installed — skipping")
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         let nonexistent = dir.appendingPathComponent("nonexistent-\(UUID().uuidString).mp4")
         let output = dir.appendingPathComponent("out-\(UUID().uuidString).mp4")

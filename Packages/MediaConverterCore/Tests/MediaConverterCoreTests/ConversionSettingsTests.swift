@@ -32,8 +32,14 @@ final class ConversionSettingsTests: XCTestCase {
     }
 
     func testEncoderPresetSVTAV1Mapping() {
-        XCTAssertEqual(EncoderPreset.slow.svtAV1Value, 4)
+        XCTAssertEqual(EncoderPreset.ultrafast.svtAV1Value, 13)
+        XCTAssertEqual(EncoderPreset.superfast.svtAV1Value, 12)
+        XCTAssertEqual(EncoderPreset.veryfast.svtAV1Value, 10)
+        XCTAssertEqual(EncoderPreset.faster.svtAV1Value, 9)
+        XCTAssertEqual(EncoderPreset.fast.svtAV1Value, 8)
         XCTAssertEqual(EncoderPreset.medium.svtAV1Value, 6)
+        XCTAssertEqual(EncoderPreset.slow.svtAV1Value, 4)
+        XCTAssertEqual(EncoderPreset.slower.svtAV1Value, 3)
         XCTAssertEqual(EncoderPreset.veryslow.svtAV1Value, 2)
     }
 
