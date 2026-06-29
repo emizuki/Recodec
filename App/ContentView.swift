@@ -66,19 +66,28 @@ struct ContentView: View {
                 Text("Format")
                 Picker("", selection: $viewModel.settings.container) {
                     ForEach(Container.allCases, id: \.self) { Text($0.fileExtension.uppercased()).tag($0) }
-                }.labelsHidden()
+                }
+                .labelsHidden()
+                .onChange(of: viewModel.settings.container) { _ in viewModel.containerChanged() }
             }
             GridRow {
                 Text("Video")
+                let validVideo = CodecCompatibility.videoCodecs(for: viewModel.settings.container)
                 Picker("", selection: $viewModel.settings.videoCodec) {
-                    ForEach(VideoCodec.allCases, id: \.self) { Text(label($0)).tag($0) }
-                }.labelsHidden()
+                    ForEach(validVideo, id: \.self) { Text(label($0)).tag($0) }
+                }
+                .labelsHidden()
+                .disabled(viewModel.settings.container == .gif)
+                .onChange(of: viewModel.settings.videoCodec) { _ in viewModel.videoCodecChanged() }
             }
             GridRow {
                 Text("Audio")
+                let validAudio = CodecCompatibility.audioCodecs(for: viewModel.settings.container)
                 Picker("", selection: $viewModel.settings.audioCodec) {
-                    ForEach(AudioCodec.allCases, id: \.self) { Text(label($0)).tag($0) }
-                }.labelsHidden()
+                    ForEach(validAudio, id: \.self) { Text(label($0)).tag($0) }
+                }
+                .labelsHidden()
+                .disabled(viewModel.settings.container == .gif)
             }
             if viewModel.settings.videoCodec.supportsCRF {
                 GridRow {
