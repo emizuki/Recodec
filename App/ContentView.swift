@@ -33,8 +33,15 @@ struct ContentView: View {
 
     private var fileList: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("Files").font(.headline)
+                if !viewModel.items.isEmpty {
+                    Text("\(viewModel.items.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(.quaternary))
+                }
                 Spacer()
                 if !viewModel.items.isEmpty {
                     Button("Clear All") { viewModel.clearAll() }
@@ -45,28 +52,24 @@ struct ContentView: View {
             if viewModel.items.isEmpty {
                 Text("Drag media here, or click Add Files…")
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .frame(maxWidth: .infinity, minHeight: 64)
                     .background(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, style: StrokeStyle(dash: [5])))
             } else {
-                ForEach(viewModel.items) { item in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(item.url.lastPathComponent).lineLimit(1)
-                            Text(subtitle(for: item)).font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
+                            FileRow(item: item, isConverting: viewModel.isConverting) {
+                                viewModel.removeItem(id: item.id)
+                            }
+                            if index < viewModel.items.count - 1 {
+                                Divider().padding(.leading, 48)
+                            }
                         }
-                        Spacer()
-                        if case .converting = item.status {
-                            ProgressView(value: item.progress).frame(width: 90)
-                        }
-                        Button { viewModel.removeItem(id: item.id) } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .disabled(viewModel.isConverting)
-                        .help("Remove")
                     }
                 }
+                .frame(maxHeight: 180)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10)))
             }
         }
     }
@@ -185,23 +188,6 @@ struct ContentView: View {
         viewModel.settings.audioCodec != .copy && viewModel.settings.audioCodec != .none
     }
 
-    private func subtitle(for item: ConversionViewModel.InputItem) -> String {
-        switch item.status {
-        case .pending, .probing:
-            return "Reading…"
-        case .ready:
-            let v = item.info?.videoCodecName ?? "—"
-            let a = item.info?.audioCodecName ?? "—"
-            return "video: \(v) · audio: \(a)"
-        case .converting:
-            return "Converting…"
-        case .done(let url):
-            return "Done → \(url.lastPathComponent)"
-        case .failed(let message):
-            return "Failed: \(message)"
-        }
-    }
-
     private func label(_ v: VideoCodec) -> String {
         switch v {
         case .h264: return "H.264"
@@ -283,5 +269,96 @@ struct ContentView: View {
             }
             await viewModel.loadFiles(urls)
         }
+    }
+}
+
+/// A single row in the Files list: a type glyph, the (middle-truncated) filename,
+/// codec + status badges, a hover-revealed Remove button, and a progress fill
+/// behind the row while it converts.
+private struct FileRow: View {
+    let item: ConversionViewModel.InputItem
+    let isConverting: Bool
+    let onRemove: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.url.lastPathComponent)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack(spacing: 4) {
+                    if let v = item.info?.videoCodecName { Badge(text: v.uppercased()) }
+                    if let a = item.info?.audioCodecName { Badge(text: a.uppercased()) }
+                    statusBadge
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if hovering && !isConverting {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Remove")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(alignment: .leading) {
+            if case .converting = item.status {
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.14))
+                        .frame(width: geo.size.width * item.progress)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+
+    private var iconName: String {
+        if item.info?.videoCodecName != nil { return "film" }
+        if item.info?.audioCodecName != nil { return "waveform" }
+        return "doc"
+    }
+
+    @ViewBuilder private var statusBadge: some View {
+        switch item.status {
+        case .pending, .probing:
+            Badge(text: "Reading…")
+        case .ready:
+            EmptyView()
+        case .converting:
+            Badge(text: "Converting \(Int(item.progress * 100))%", color: .accentColor)
+        case .done:
+            Badge(text: "Done", color: .green)
+        case .failed(let message):
+            Badge(text: "Failed", color: .red).help(message)
+        }
+    }
+}
+
+/// A small capsule label used for codec names and status in a file row.
+private struct Badge: View {
+    let text: String
+    var color: Color = .secondary
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .foregroundStyle(color)
+            .background(Capsule().fill(color.opacity(0.16)))
     }
 }
