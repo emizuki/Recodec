@@ -5,12 +5,13 @@ import MediaConverterCore
 
 struct ContentView: View {
     @ObservedObject var viewModel: ConversionViewModel
+    @State private var window: NSWindow?
+    @State private var contentHeight: CGFloat = 0
+    @State private var rowsHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !viewModel.toolsAvailable {
-                ffmpegBanner
-            }
+            if !viewModel.toolsAvailable { ffmpegBanner }
             fileList
             Divider()
             settingsForm
@@ -19,10 +20,24 @@ struct ContentView: View {
             footer
         }
         .padding(16)
+        .background(GeometryReader { proxy in
+            Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+        })
+        .onPreferenceChange(ContentHeightKey.self) { newHeight in
+            contentHeight = newHeight
+            syncWindowHeight()
+        }
+        .onPreferenceChange(RowsHeightKey.self) { rowsHeight = $0 }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             loadDroppedFiles(providers)
             return true
         }
+        .background(WindowAccessor { resolved in
+            if window == nil {
+                window = resolved
+                syncWindowHeight()
+            }
+        })
     }
 
     private var ffmpegBanner: some View {
@@ -33,43 +48,56 @@ struct ContentView: View {
 
     private var fileList: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("Files").font(.headline)
-                if !viewModel.items.isEmpty {
-                    Text("\(viewModel.items.count)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .background(Capsule().fill(.quaternary))
-                }
-                Spacer()
-                if !viewModel.items.isEmpty {
-                    Button("Clear All") { viewModel.clearAll() }
-                        .disabled(viewModel.isConverting)
-                }
-                Button("Add Files…") { openPanel() }
-            }
+            filesHeader
             if viewModel.items.isEmpty {
                 Text("Drag media here, or click Add Files…")
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 64)
+                    .frame(maxWidth: .infinity, minHeight: 120)
                     .background(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary, style: StrokeStyle(dash: [5])))
             } else {
+                // Explicit height = measured rows clamped to [44, 400]: hugs a
+                // short list, caps a long one so it scrolls. (fixedSize would hug
+                // but ignore the cap, overrunning the window.)
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
-                            FileRow(item: item, isConverting: viewModel.isConverting) {
-                                viewModel.removeItem(id: item.id)
-                            }
-                            if index < viewModel.items.count - 1 {
-                                Divider().padding(.leading, 48)
-                            }
-                        }
-                    }
+                    VStack(spacing: 0) { fileRows }
+                        .background(GeometryReader { geo in
+                            Color.clear.preference(key: RowsHeightKey.self, value: geo.size.height)
+                        })
                 }
-                .frame(maxHeight: 180)
+                .frame(height: min(max(rowsHeight, 44), 400))
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10)))
+            }
+        }
+    }
+
+    private var filesHeader: some View {
+        HStack(spacing: 8) {
+            Text("Files").font(.headline)
+            if !viewModel.items.isEmpty {
+                Text("\(viewModel.items.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Capsule().fill(.quaternary))
+            }
+            Spacer()
+            if !viewModel.items.isEmpty {
+                Button("Clear All") { viewModel.clearAll() }
+                    .disabled(viewModel.isConverting)
+            }
+            Button("Add Files…") { openPanel() }
+        }
+    }
+
+    /// The file rows plus inset dividers shown inside the scrollable list pane.
+    @ViewBuilder private var fileRows: some View {
+        ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
+            FileRow(item: item, isConverting: viewModel.isConverting) {
+                viewModel.removeItem(id: item.id)
+            }
+            if index < viewModel.items.count - 1 {
+                Divider().padding(.leading, 48)
             }
         }
     }
@@ -237,6 +265,44 @@ struct ContentView: View {
         }
     }
 
+    /// Resizes the window to fit the whole measured content (header + list +
+    /// settings + footer), anchored at the top so it grows downward, then pins the
+    /// height so the window always fits its content exactly and can't be shrunk
+    /// into a clip. The list's own maxHeight caps a long list (it scrolls), so the
+    /// window never needs to exceed the screen.
+    ///
+    /// Deferred to the next run-loop tick: this fires from a preference change that
+    /// can run *during* a SwiftUI layout pass, and resizing the window synchronously
+    /// from inside layout re-enters AppKit and crashes. `animate: false` avoids a
+    /// nested animation run-loop for the same reason.
+    private func syncWindowHeight() {
+        DispatchQueue.main.async {
+            guard let window, contentHeight > 1 else { return }
+            let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+                ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            // Convert the SwiftUI content height to a window frame height so the
+            // title bar is accounted for by AppKit, not guessed.
+            let frameTarget = window.frameRect(forContentRect:
+                NSRect(x: 0, y: 0, width: 200, height: contentHeight)).height
+            let target = min(frameTarget, visible.height - 40)
+
+            // Relax the height limits so the resize can move either direction,
+            // apply it, then pin min and max height to the content.
+            let freeWidth = CGFloat.greatestFiniteMagnitude
+            window.minSize = NSSize(width: 420, height: 0)
+            window.maxSize = NSSize(width: freeWidth, height: freeWidth)
+            var frame = window.frame
+            if abs(frame.height - target) > 1 {
+                frame.origin.y += frame.height - target   // keep the top edge fixed
+                frame.size.height = target
+                if frame.minY < visible.minY { frame.origin.y = visible.minY }
+                window.setFrame(frame, display: true, animate: false)
+            }
+            window.minSize = NSSize(width: 420, height: target)
+            window.maxSize = NSSize(width: freeWidth, height: target)
+        }
+    }
+
     private func openPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -294,8 +360,8 @@ private struct FileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 HStack(spacing: 4) {
-                    if let v = item.info?.videoCodecName { Badge(text: v.uppercased()) }
-                    if let a = item.info?.audioCodecName { Badge(text: a.uppercased()) }
+                    if let v = item.info?.videoCodecName { Badge(text: prettyCodec(v)) }
+                    if let a = item.info?.audioCodecName { Badge(text: prettyCodec(a)) }
                     statusBadge
                 }
             }
@@ -332,6 +398,33 @@ private struct FileRow: View {
         return "doc"
     }
 
+    /// Maps ffprobe's raw codec names to the friendly forms used in the pickers
+    /// (e.g. "h264" → "H.264", "pcm_s16le" → "PCM"). Unknown codecs fall back to
+    /// uppercase so anything ffmpeg reports still renders sensibly.
+    private func prettyCodec(_ raw: String) -> String {
+        let key = raw.lowercased()
+        if key.hasPrefix("pcm") { return "PCM" }
+        switch key {
+        case "h264", "avc1": return "H.264"
+        case "hevc", "h265": return "HEVC"
+        case "av1":          return "AV1"
+        case "vp9":          return "VP9"
+        case "vp8":          return "VP8"
+        case "mpeg4":        return "MPEG-4"
+        case "mpeg2video":   return "MPEG-2"
+        case "prores":       return "ProRes"
+        case "aac":          return "AAC"
+        case "mp3":          return "MP3"
+        case "alac":         return "ALAC"
+        case "opus":         return "Opus"
+        case "vorbis":       return "Vorbis"
+        case "flac":         return "FLAC"
+        case "ac3":          return "AC-3"
+        case "eac3":         return "E-AC-3"
+        default:             return raw.uppercased()
+        }
+    }
+
     @ViewBuilder private var statusBadge: some View {
         switch item.status {
         case .pending, .probing:
@@ -345,6 +438,39 @@ private struct FileRow: View {
         case .failed(let message):
             Badge(text: "Failed", color: .red).help(message)
         }
+    }
+}
+
+/// Carries the measured natural height of the whole window content up to
+/// ContentView, which resizes the window to match.
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Natural height of the file rows, used to size the list pane (hug up to a cap).
+private struct RowsHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Resolves the NSWindow hosting this SwiftUI content so the window can be
+/// resized to fit the file list.
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { if let w = view.window { onResolve(w) } }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { if let w = nsView.window { onResolve(w) } }
     }
 }
 
