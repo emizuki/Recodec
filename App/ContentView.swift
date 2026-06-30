@@ -93,7 +93,8 @@ struct ContentView: View {
     /// The file rows plus inset dividers shown inside the scrollable list pane.
     @ViewBuilder private var fileRows: some View {
         ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
-            FileRow(item: item, isConverting: viewModel.isConverting) {
+            FileRow(item: item, isConverting: viewModel.isConverting,
+                    estimate: rowEstimate(for: item)) {
                 viewModel.removeItem(id: item.id)
             }
             if index < viewModel.items.count - 1 {
@@ -160,7 +161,6 @@ struct ContentView: View {
                                 .frame(width: 72)
                                 .multilineTextAlignment(.trailing)
                             Text("kbps").foregroundStyle(.secondary)
-                            Text(estimatedSizeText).foregroundStyle(.secondary)
                             Spacer()
                         }
                     }
@@ -248,8 +248,12 @@ struct ContentView: View {
     private var audioReencoding: Bool {
         viewModel.settings.audioCodec != .copy && viewModel.settings.audioCodec != .none
     }
-    private var estimatedSizeText: String {
-        guard let duration = viewModel.items.first?.info?.durationSeconds, duration > 0 else { return "≈ —" }
+    /// Per-file output-size estimate shown in the list, only in bitrate mode.
+    /// Returns nil when there's nothing meaningful to show (quality mode,
+    /// non-bitrate codec, or unknown duration) so the row stays clean.
+    private func rowEstimate(for item: ConversionViewModel.InputItem) -> String? {
+        guard viewModel.settings.usesBitrate,
+              let duration = item.info?.durationSeconds, duration > 0 else { return nil }
         let bytes = viewModel.settings.estimatedOutputBytes(durationSeconds: duration)
         return "≈ " + ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
@@ -404,6 +408,7 @@ struct ContentView: View {
 private struct FileRow: View {
     let item: ConversionViewModel.InputItem
     let isConverting: Bool
+    let estimate: String?
     let onRemove: () -> Void
     @State private var hovering = false
 
@@ -427,6 +432,13 @@ private struct FileRow: View {
             }
 
             Spacer(minLength: 8)
+
+            if let estimate {
+                Text(estimate)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
 
             if hovering && !isConverting {
                 Button(action: onRemove) {
