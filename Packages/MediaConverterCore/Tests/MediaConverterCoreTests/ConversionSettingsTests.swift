@@ -73,4 +73,58 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640])
         XCTAssertEqual(AudioBitrate.presets.first, .auto)
     }
+
+    func testDefaultRateControlIsQuality() {
+        let s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        XCTAssertEqual(s.rateControl, .quality)
+        XCTAssertEqual(s.videoBitrateKbps, 2000)
+        XCTAssertTrue(s.twoPass)
+        XCTAssertFalse(s.usesBitrate)
+        XCTAssertFalse(s.effectiveTwoPass)
+    }
+
+    func testUsesBitrateOnlyForSoftwareEncodableCodecs() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.rateControl = .bitrate
+        XCTAssertTrue(s.usesBitrate)
+        s.videoCodec = .copy
+        XCTAssertFalse(s.usesBitrate, "bitrate mode does not apply to copy")
+        s.videoCodec = .prores
+        XCTAssertFalse(s.usesBitrate, "bitrate mode does not apply to ProRes")
+    }
+
+    func testEffectiveTwoPassRequiresSoftwareAndToggle() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25)
+        s.rateControl = .bitrate
+        XCTAssertTrue(s.effectiveTwoPass, "bitrate + software + twoPass on")
+        s.useHardware = true
+        XCTAssertFalse(s.effectiveTwoPass, "VideoToolbox cannot 2-pass")
+        s.useHardware = false
+        s.twoPass = false
+        XCTAssertFalse(s.effectiveTwoPass, "2-pass toggled off")
+        s.twoPass = true
+        s.rateControl = .quality
+        XCTAssertFalse(s.effectiveTwoPass, "quality mode is never 2-pass")
+    }
+
+    func testEstimatedOutputBytes() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20,
+                                   audioBitrate: .kbps(128))
+        s.rateControl = .bitrate
+        s.videoBitrateKbps = 2000
+        // (2000 + 128) kbps * 1000 / 8 * 60s = 15,960,000 bytes
+        XCTAssertEqual(s.estimatedOutputBytes(durationSeconds: 60), 15_960_000)
+        XCTAssertEqual(s.estimatedAudioKbps, 128)
+    }
+
+    func testEstimatedAudioKbpsDefaults() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .none, crf: 20)
+        XCTAssertEqual(s.estimatedAudioKbps, 0)
+        s.audioCodec = .copy
+        XCTAssertEqual(s.estimatedAudioKbps, 128)
+        s.audioCodec = .aac            // lossy, auto bitrate
+        XCTAssertEqual(s.estimatedAudioKbps, 128)
+        s.audioCodec = .flac           // lossless, not modeled
+        XCTAssertEqual(s.estimatedAudioKbps, 0)
+    }
 }

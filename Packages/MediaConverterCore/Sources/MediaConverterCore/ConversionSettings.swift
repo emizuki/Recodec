@@ -179,6 +179,10 @@ public enum AudioBitrate: Sendable, Equatable, Hashable {
     ]
 }
 
+public enum RateControl: String, CaseIterable, Sendable {
+    case quality, bitrate
+}
+
 public struct ConversionSettings: Sendable, Equatable {
     public var container: Container
     public var videoCodec: VideoCodec
@@ -189,11 +193,16 @@ public struct ConversionSettings: Sendable, Equatable {
     public var useHardware: Bool
     public var preset: EncoderPreset
     public var proResProfile: ProResProfile
+    public var rateControl: RateControl
+    public var videoBitrateKbps: Int
+    public var twoPass: Bool
 
     public init(container: Container, videoCodec: VideoCodec, audioCodec: AudioCodec,
                 crf: Int, channels: AudioChannels = .source,
                 audioBitrate: AudioBitrate = .auto, useHardware: Bool = false,
-                preset: EncoderPreset = .slow, proResProfile: ProResProfile = .hq) {
+                preset: EncoderPreset = .slow, proResProfile: ProResProfile = .hq,
+                rateControl: RateControl = .quality, videoBitrateKbps: Int = 2000,
+                twoPass: Bool = true) {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -203,10 +212,42 @@ public struct ConversionSettings: Sendable, Equatable {
         self.useHardware = useHardware
         self.preset = preset
         self.proResProfile = proResProfile
+        self.rateControl = rateControl
+        self.videoBitrateKbps = videoBitrateKbps
+        self.twoPass = twoPass
     }
 
     public static let iPhoneDefault = ConversionSettings(
         container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25)
+}
+
+extension ConversionSettings {
+    /// Bitrate mode only applies to software-encodable video codecs; for
+    /// copy/none/ProRes it is ignored and the conversion behaves as quality mode.
+    public var usesBitrate: Bool { rateControl == .bitrate && videoCodec.supportsCRF }
+
+    /// True only when ffmpeg should run two passes: bitrate mode, the toggle on,
+    /// and a software encoder (VideoToolbox cannot 2-pass).
+    public var effectiveTwoPass: Bool { usesBitrate && twoPass && !useHardware }
+
+    /// Approximate audio bitrate folded into the size estimate. Lossless/PCM are
+    /// variable and not modeled (treated as 0); the estimate is labeled `≈`.
+    public var estimatedAudioKbps: Int {
+        switch audioCodec {
+        case .none: return 0
+        case .copy: return 128
+        default:
+            guard audioCodec.supportsBitrate else { return 0 }
+            if case .kbps(let k) = audioBitrate { return k }
+            return 128
+        }
+    }
+
+    /// Estimated output size in bytes for bitrate mode, from the target video
+    /// bitrate, the estimated audio bitrate, and the source duration.
+    public func estimatedOutputBytes(durationSeconds: Double) -> Int {
+        Int(Double(videoBitrateKbps + estimatedAudioKbps) * 1000 / 8 * durationSeconds)
+    }
 }
 
 extension ConversionSettings {
