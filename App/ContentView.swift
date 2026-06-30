@@ -165,9 +165,10 @@ struct ContentView: View {
                                 .frame(width: 72)
                                 .multilineTextAlignment(.trailing)
                             Text("kbps").foregroundStyle(.secondary)
-                            Spacer()
                             Toggle("2-pass", isOn: $viewModel.settings.twoPass)
                                 .disabled(viewModel.settings.useHardware)
+                                .padding(.leading, 8)
+                            Spacer()
                         }
                         .frame(height: 24)
                     }
