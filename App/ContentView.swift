@@ -307,10 +307,32 @@ struct ContentView: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
+        panel.allowedContentTypes = allowedInputTypes
         if panel.runModal() == .OK {
             let urls = panel.urls
             Task { await viewModel.loadFiles(urls) }
         }
+    }
+
+    /// Media types the Add Files… panel allows, so non-media files (png, json, …)
+    /// are filtered out. Video uses the broad supertypes; audio is listed by
+    /// extension rather than the `.audio`/`.audiovisualContent` supertypes because
+    /// MIDI conforms to those but ffmpeg can't decode it (no synthesizer).
+    private var allowedInputTypes: [UTType] {
+        var types: [UTType] = [.movie, .video]
+        let extensions = [
+            // video containers
+            "mp4", "mov", "m4v", "mkv", "webm", "avi", "flv", "wmv",
+            "mpg", "mpeg", "ts", "m2ts", "ogv", "3gp", "3g2",
+            // audio (MIDI deliberately omitted)
+            "mp3", "m4a", "aac", "flac", "wav", "aiff", "aif", "ogg", "oga",
+            "opus", "wma", "ac3", "eac3", "m4b", "caf", "ape", "wv", "amr",
+            "mka", "dts", "alac",
+        ]
+        for ext in extensions {
+            if let type = UTType(filenameExtension: ext) { types.append(type) }
+        }
+        return types
     }
 
     private func loadDroppedFiles(_ providers: [NSItemProvider]) {
