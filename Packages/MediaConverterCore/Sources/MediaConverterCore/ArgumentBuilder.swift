@@ -5,81 +5,95 @@ public enum ArgumentBuilder {
         max(1, min(100, 100 - crf * 2))
     }
 
-    public static func build(settings s: ConversionSettings, input: String, output: String, source: MediaInfo) -> [String] {
-        // GIF: let ffmpeg's gif muxer auto-select the encoder; strip audio; no codec/crf/tag flags.
+    /// Builds the ffmpeg command(s) for a conversion. Returns one command for
+    /// every mode except software 2-pass bitrate, which returns `[pass1, pass2]`.
+    /// `passLog` is the `-passlogfile` prefix (used only for 2-pass).
+    public static func build(settings s: ConversionSettings, input: String, output: String,
+                             source: MediaInfo, passLog: String = "") -> [[String]] {
         if s.container == .gif {
-            return ["-hide_banner", "-y", "-i", input, "-an", output]
+            return [["-hide_banner", "-y", "-i", input, "-an", output]]
         }
 
-        var args = ["-hide_banner", "-y", "-i", input]
         let mp4Family: Set<Container> = [.mp4, .mov, .m4v]
+        let inputArgs = ["-hide_banner", "-y", "-i", input]
 
-        // ---- video ----
+        // Video encode args (codec + rate control + preset + pix_fmt + profile).
+        // `videoTag` (container hvc1) is kept separate so pass 1 can omit it.
+        var videoEncode: [String] = []
+        var videoTag: [String] = []
+
         switch s.videoCodec {
         case .none:
-            args += ["-vn"]
+            videoEncode = ["-vn"]
         case .copy:
-            args += ["-c:v", "copy"]
+            videoEncode = ["-c:v", "copy"]
             if source.videoCodecName == "hevc", mp4Family.contains(s.container) {
-                args += ["-tag:v", "hvc1"]
+                videoTag = ["-tag:v", "hvc1"]
             }
         case .prores:
-            // ProRes uses a discrete profile — no CRF, preset, pixel-format, or tag flags.
             if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
-                args += ["-c:v", hw, "-profile:v", String(s.proResProfile.ffmpegValue)]
+                videoEncode = ["-c:v", hw, "-profile:v", String(s.proResProfile.ffmpegValue)]
             } else if let sw = s.videoCodec.softwareEncoder {
-                args += ["-c:v", sw, "-profile:v", String(s.proResProfile.ffmpegValue)]
+                videoEncode = ["-c:v", sw, "-profile:v", String(s.proResProfile.ffmpegValue)]
             }
-        default:
+        default: // h264 / hevc / av1 / vp9
             if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
-                args += ["-c:v", hw, "-q:v", String(videoToolboxQuality(fromCRF: s.crf))]
+                videoEncode = ["-c:v", hw]
+                videoEncode += s.usesBitrate
+                    ? ["-b:v", "\(s.videoBitrateKbps)k"]
+                    : ["-q:v", String(videoToolboxQuality(fromCRF: s.crf))]
             } else if let sw = s.videoCodec.softwareEncoder {
-                args += ["-c:v", sw]
+                videoEncode = ["-c:v", sw]
                 if s.videoCodec.supportsPreset {
-                    if s.videoCodec == .av1 {
-                        args += ["-preset", String(s.preset.svtAV1Value)]
-                    } else {
-                        args += ["-preset", s.preset.x264Name]
-                    }
+                    videoEncode += s.videoCodec == .av1
+                        ? ["-preset", String(s.preset.svtAV1Value)]
+                        : ["-preset", s.preset.x264Name]
                 }
-                args += ["-crf", String(s.crf)]
-                if s.videoCodec == .vp9 { args += ["-b:v", "0"] }
+                if s.usesBitrate {
+                    videoEncode += ["-b:v", "\(s.videoBitrateKbps)k"]
+                } else {
+                    videoEncode += ["-crf", String(s.crf)]
+                    if s.videoCodec == .vp9 { videoEncode += ["-b:v", "0"] }
+                }
             }
             if s.videoCodec == .h264 || s.videoCodec == .hevc {
-                args += ["-pix_fmt", "yuv420p"]
+                videoEncode += ["-pix_fmt", "yuv420p"]
             }
             if s.videoCodec == .h264 {
-                args += ["-profile:v", "high"]
+                videoEncode += ["-profile:v", "high"]
             }
             if s.videoCodec == .hevc, mp4Family.contains(s.container) {
-                args += ["-tag:v", "hvc1"]
+                videoTag = ["-tag:v", "hvc1"]
             }
         }
 
-        // ---- audio ----
+        var audioArgs: [String] = []
         switch s.audioCodec {
         case .none:
-            args += ["-an"]
+            audioArgs = ["-an"]
         case .copy:
-            args += ["-c:a", "copy"]
+            audioArgs = ["-c:a", "copy"]
         default:
             if let enc = s.audioCodec.encoder {
-                args += ["-c:a", enc]
+                audioArgs = ["-c:a", enc]
                 if s.audioCodec.supportsBitrate, let bitrate = s.audioBitrate.ffmpegArgument {
-                    args += ["-b:a", bitrate]
+                    audioArgs += ["-b:a", bitrate]
                 }
                 if let ch = s.channels.count {
-                    args += ["-ac", String(ch)]
+                    audioArgs += ["-ac", String(ch)]
                 }
             }
         }
 
-        // ---- container ----
-        if s.container.supportsFaststart {
-            args += ["-movflags", "+faststart"]
-        }
+        let faststart = s.container.supportsFaststart ? ["-movflags", "+faststart"] : []
 
-        args.append(output)
-        return args
+        if s.effectiveTwoPass {
+            let pass1 = inputArgs + videoEncode
+                + ["-pass", "1", "-passlogfile", passLog, "-an", "-f", "null", "/dev/null"]
+            let pass2 = inputArgs + videoEncode
+                + ["-pass", "2", "-passlogfile", passLog] + videoTag + audioArgs + faststart + [output]
+            return [pass1, pass2]
+        }
+        return [inputArgs + videoEncode + videoTag + audioArgs + faststart + [output]]
     }
 }

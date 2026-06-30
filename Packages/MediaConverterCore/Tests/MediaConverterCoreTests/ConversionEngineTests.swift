@@ -32,6 +32,42 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertGreaterThan(progressBox.max, 0.0)
     }
 
+    func testTwoPassBitrateProducesOutput() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let input = dir.appendingPathComponent("eng2p-in-\(UUID().uuidString).mp4")
+        let output = dir.appendingPathComponent("eng2p-out-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: input); try? FileManager.default.removeItem(at: output) }
+
+        let gen = Process()
+        gen.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+        gen.arguments = ["-hide_banner", "-loglevel", "error",
+                         "-f", "lavfi", "-i", "testsrc=size=160x120:rate=15:duration=1",
+                         "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                         "-shortest", "-c:v", "libx264", "-c:a", "aac", "-y", input.path]
+        try gen.run(); gen.waitUntilExit()
+
+        let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+        var settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        settings.rateControl = .bitrate
+        settings.videoBitrateKbps = 800
+        XCTAssertTrue(settings.effectiveTwoPass)
+
+        let progressBox = ProgressBox()
+        let engine = FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+        try await engine.convert(input: input, output: output, settings: settings, source: source) { f in
+            progressBox.record(f)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+        let result = try await MediaProbe(ffprobe: tools.ffprobe).probe(output)
+        XCTAssertEqual(result.videoCodecName, "h264")
+        XCTAssertGreaterThan(progressBox.max, 0.0)
+        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()))?
+            .filter { $0.hasPrefix("recodec-pass-") } ?? []
+        XCTAssertTrue(leftovers.isEmpty, "passlog temp files must be removed")
+    }
+
     /// Regression: when ffmpeg exits with a non-zero status the stderrTail must be
     /// non-empty — bytes that sat in the kernel pipe buffer after the handler was nil'd
     /// must be captured by the final synchronous readDataToEndOfFile() call.

@@ -94,28 +94,46 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
 
     public func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
                         onProgress: @escaping (Double) -> Void) async throws {
-        let conversionArgs = ArgumentBuilder.build(settings: settings, input: input.path,
-                                                   output: output.path, source: source)
+        let passLog = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("recodec-pass-\(UUID().uuidString)")
+        defer { cleanupPassLog(prefix: passLog) }
+
+        let commands = ArgumentBuilder.build(settings: settings, input: input.path,
+                                             output: output.path, source: source, passLog: passLog)
+        let count = commands.count
+        do {
+            for (index, args) in commands.enumerated() {
+                try await runProcess(args: args, durationSeconds: source.durationSeconds) { fraction in
+                    onProgress((Double(index) + fraction) / Double(count))
+                }
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: output)
+            throw error
+        }
+        onProgress(1.0)
+    }
+
+    /// Runs one ffmpeg command to completion, forwarding parsed progress. Throws
+    /// `.cancelled` or `.ffmpegFailed`; the caller owns output/passlog cleanup.
+    private func runProcess(args: [String], durationSeconds: Double?,
+                            onProgress: @escaping (Double) -> Void) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffmpeg)
-        process.arguments = ["-progress", "pipe:1", "-nostats"] + conversionArgs
+        process.arguments = ["-progress", "pipe:1", "-nostats"] + args
 
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
 
-        // LockedParser avoids capturing a mutable var in the readabilityHandler closure.
-        let lockedParser = LockedParser(durationSeconds: source.durationSeconds)
+        let lockedParser = LockedParser(durationSeconds: durationSeconds)
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            let fraction = lockedParser.consume(text)
-            onProgress(fraction)
+            onProgress(lockedParser.consume(text))
         }
 
-        // Drain stderr concurrently so ffmpeg never blocks on a full pipe buffer.
-        // readDataToEndOfFile() after process exit would deadlock if ffmpeg wrote >~64 KB.
         let stderrBuffer = LockedBuffer()
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
@@ -123,11 +141,8 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
             stderrBuffer.append(chunk)
         }
 
-        // Store the process BEFORE run() so cancel() can find it immediately.
         state.begin(process)
 
-        // Set terminationHandler BEFORE run() to eliminate the race where the process
-        // could exit between run() and handler assignment, leaving the continuation stuck.
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in cont.resume() }
             do {
@@ -142,24 +157,27 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
 
         stdout.fileHandleForReading.readabilityHandler = nil
         stderr.fileHandleForReading.readabilityHandler = nil
-        // Final synchronous drain: bytes written by ffmpeg just before exit may still sit in
-        // the kernel pipe buffer and not yet have been delivered to the readabilityHandler.
-        // This is safe post-exit because the write-end of the pipe is now closed and the
-        // concurrent handler has already been nil'd — no double-read is possible.
         stderrBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
         let stderrData = stderrBuffer.accumulated
 
-        let wasCancelled = state.finishAndWasCancelled()
-        if wasCancelled {
-            try? FileManager.default.removeItem(at: output)
+        if state.finishAndWasCancelled() {
             throw ConversionError.cancelled
         }
         guard process.terminationStatus == 0 else {
-            try? FileManager.default.removeItem(at: output)
             let tail = String(decoding: stderrData.suffix(800), as: UTF8.self)
             throw ConversionError.ffmpegFailed(code: process.terminationStatus, stderrTail: tail)
         }
-        onProgress(1.0)
+    }
+
+    /// Removes every file at the passlog prefix (encoders name them differently:
+    /// `-0.log`, `-0.log.mbtree`, `-0.log.cutree`, …).
+    private func cleanupPassLog(prefix: String) {
+        let dir = (prefix as NSString).deletingLastPathComponent
+        let base = (prefix as NSString).lastPathComponent
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+        for file in files where file.hasPrefix(base) {
+            try? FileManager.default.removeItem(atPath: (dir as NSString).appendingPathComponent(file))
+        }
     }
 
     public func cancel() {
