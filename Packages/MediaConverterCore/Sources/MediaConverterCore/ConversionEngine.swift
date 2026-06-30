@@ -19,12 +19,26 @@ private final class ConversionState: @unchecked Sendable {
     private var process: Process?
     private var cancelled = false
 
-    /// Reset the cancelled flag and store the process atomically — call BEFORE run().
-    func begin(_ process: Process) {
+    /// Reset the cancelled flag — call ONCE at the start of a conversion.
+    func reset() {
         lock.lock()
         cancelled = false
+        lock.unlock()
+    }
+
+    /// Store the process atomically — call BEFORE run(). Does NOT touch the
+    /// cancelled flag (reset() owns that, once per conversion).
+    func begin(_ process: Process) {
+        lock.lock()
         self.process = process
         lock.unlock()
+    }
+
+    /// Whether cancel() has been requested for the current conversion.
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
     }
 
     /// Clear the stored process and return whether the run was cancelled.
@@ -94,6 +108,7 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
 
     public func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
                         onProgress: @escaping (Double) -> Void) async throws {
+        state.reset()
         let passLog = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("recodec-pass-\(UUID().uuidString)")
         defer { cleanupPassLog(prefix: passLog) }
@@ -103,6 +118,7 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
         let count = commands.count
         do {
             for (index, args) in commands.enumerated() {
+                if state.isCancelled { throw ConversionError.cancelled }
                 try await runProcess(args: args, durationSeconds: source.durationSeconds) { fraction in
                     onProgress((Double(index) + fraction) / Double(count))
                 }
@@ -134,6 +150,7 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
             onProgress(lockedParser.consume(text))
         }
 
+        // Drain stderr concurrently so ffmpeg never blocks on a full pipe buffer. A readDataToEndOfFile() after exit would deadlock if ffmpeg wrote >~64 KB.
         let stderrBuffer = LockedBuffer()
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
@@ -141,8 +158,10 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
             stderrBuffer.append(chunk)
         }
 
+        // Store the process BEFORE run() so cancel() can find it immediately.
         state.begin(process)
 
+        // Set terminationHandler BEFORE run() to close the race where the process exits between run() and handler assignment, leaving the continuation stuck.
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in cont.resume() }
             do {
@@ -157,6 +176,7 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
 
         stdout.fileHandleForReading.readabilityHandler = nil
         stderr.fileHandleForReading.readabilityHandler = nil
+        // Final synchronous drain: bytes ffmpeg wrote just before exit may still sit in the kernel pipe buffer. Safe post-exit — the write end is closed and the concurrent handler is already nil'd.
         stderrBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
         let stderrData = stderrBuffer.accumulated
 

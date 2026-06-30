@@ -123,6 +123,11 @@ public final class ConversionViewModel: ObservableObject {
         let range = settings.videoCodec.crfRange
         settings.crf = settings.videoCodec.defaultCRF
         settings.crf = min(max(settings.crf, range.lowerBound), range.upperBound)
+        // A stale VideoToolbox flag would silently force software encoding (and gray
+        // out the 2-pass toggle) for codecs without a hardware encoder; clear it.
+        if settings.videoCodec.hardwareEncoder == nil {
+            settings.useHardware = false
+        }
     }
 
     public func cancel() {

@@ -156,7 +156,7 @@ struct ContentView: View {
                     GridRow {
                         Text("Bitrate")
                         HStack(spacing: 8) {
-                            TextField("", value: $viewModel.settings.videoBitrateKbps, format: .number)
+                            TextField("", value: bitrateKbpsBinding, format: .number)
                                 .frame(width: 72)
                                 .multilineTextAlignment(.trailing)
                             Text("kbps").foregroundStyle(.secondary)
@@ -233,6 +233,10 @@ struct ContentView: View {
 
     // MARK: - Bindings & helpers
 
+    private var bitrateKbpsBinding: Binding<Int> {
+        Binding(get: { viewModel.settings.videoBitrateKbps },
+                set: { viewModel.settings.videoBitrateKbps = min(max($0, 1), 100_000) })
+    }
     private var crfBinding: Binding<Double> {
         Binding(get: { Double(viewModel.settings.crf) },
                 set: { viewModel.settings.crf = Int($0) })

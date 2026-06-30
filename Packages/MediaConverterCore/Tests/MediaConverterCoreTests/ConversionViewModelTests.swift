@@ -123,6 +123,24 @@ final class ConversionViewModelTests: XCTestCase {
                        "CRF must not reset when the video codec stays valid after a container switch")
     }
 
+    func testVideoCodecChangeClearsHardwareWhenUnsupported() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.videoCodec = .hevc
+        vm.settings.useHardware = true
+        vm.settings.videoCodec = .av1
+        vm.videoCodecChanged()
+        XCTAssertFalse(vm.settings.useHardware, "AV1 has no hardware encoder")
+
+        vm.settings.videoCodec = .hevc
+        vm.settings.useHardware = true
+        vm.videoCodecChanged()
+        XCTAssertTrue(vm.settings.useHardware, "HEVC has a hardware encoder; flag preserved")
+    }
+
     /// videoCodecChanged() must set crf to the codec's defaultCRF.
     func testVideoCodecChangedResetsCRF() {
         let vm = ConversionViewModel(
