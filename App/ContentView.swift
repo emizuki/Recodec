@@ -134,11 +134,40 @@ struct ContentView: View {
             if viewModel.settings.videoCodec.supportsCRF {
                 GridRow {
                     Text("Quality")
-                    HStack {
-                        Slider(value: crfBinding,
-                               in: Double(viewModel.settings.videoCodec.crfRange.lowerBound)...Double(viewModel.settings.videoCodec.crfRange.upperBound),
-                               step: 1)
-                        Text("CRF \(viewModel.settings.crf)").monospacedDigit().frame(width: 64, alignment: .trailing)
+                    Picker("", selection: $viewModel.settings.rateControl) {
+                        Text("Quality").tag(RateControl.quality)
+                        Text("Bitrate").tag(RateControl.bitrate)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 220, alignment: .leading)
+                }
+                if viewModel.settings.rateControl == .quality {
+                    GridRow {
+                        Text("")
+                        HStack {
+                            Slider(value: crfBinding,
+                                   in: Double(viewModel.settings.videoCodec.crfRange.lowerBound)...Double(viewModel.settings.videoCodec.crfRange.upperBound),
+                                   step: 1)
+                            Text("CRF \(viewModel.settings.crf)").monospacedDigit().frame(width: 64, alignment: .trailing)
+                        }
+                    }
+                } else {
+                    GridRow {
+                        Text("Bitrate")
+                        HStack(spacing: 8) {
+                            TextField("", value: $viewModel.settings.videoBitrateKbps, format: .number)
+                                .frame(width: 72)
+                                .multilineTextAlignment(.trailing)
+                            Text("kbps").foregroundStyle(.secondary)
+                            Text(estimatedSizeText).foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                    }
+                    GridRow {
+                        Text("")
+                        Toggle("2-pass", isOn: $viewModel.settings.twoPass)
+                            .disabled(viewModel.settings.useHardware)
                     }
                 }
             }
@@ -214,6 +243,11 @@ struct ContentView: View {
     }
     private var audioReencoding: Bool {
         viewModel.settings.audioCodec != .copy && viewModel.settings.audioCodec != .none
+    }
+    private var estimatedSizeText: String {
+        guard let duration = viewModel.items.first?.info?.durationSeconds, duration > 0 else { return "≈ —" }
+        let bytes = viewModel.settings.estimatedOutputBytes(durationSeconds: duration)
+        return "≈ " + ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
     private func label(_ v: VideoCodec) -> String {
