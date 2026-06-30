@@ -12,7 +12,7 @@ struct MediaConverterApp: App {
         // new window per opened file, so dropping/Service-ing N files made N
         // identical windows (all share the one view model). One Window keeps a
         // single window; the per-URL opens just funnel into the shared model.
-        Window("Media Converter", id: "main") {
+        Window("Recodec", id: "main") {
             ContentView(viewModel: viewModel)
                 // Only a width floor here; ContentView's syncWindowHeight() owns the
                 // height, pinning the window to exactly fit its content.

@@ -1,4 +1,4 @@
-name: MediaConverter
+name: Recodec
 options:
   bundleIdPrefix: com.emizuki
   deploymentTarget:
@@ -7,7 +7,7 @@ packages:
   MediaConverterCore:
     path: Packages/MediaConverterCore
 targets:
-  MediaConverter:
+  Recodec:
     type: application
     platform: macOS
     sources:
@@ -15,8 +15,8 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleName: MediaConverter
-        CFBundleDisplayName: Media Converter
+        CFBundleName: Recodec
+        CFBundleDisplayName: Recodec
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
         CFBundleDocumentTypes:
@@ -32,7 +32,7 @@ targets:
           - NSMenuItem:
               default: Convert Media
             NSMessage: convertMedia
-            NSPortName: MediaConverter
+            NSPortName: Recodec
             NSSendFileTypes:
               - public.movie
               - public.audiovisual-content
@@ -41,10 +41,11 @@ targets:
       - package: MediaConverterCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.MediaConverter
+        PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.Recodec
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
