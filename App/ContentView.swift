@@ -152,8 +152,12 @@ struct ContentView: View {
                                    step: 1)
                             Text("CRF \(viewModel.settings.crf)").monospacedDigit().frame(width: 64, alignment: .trailing)
                         }
+                        .frame(height: 24)
                     }
                 } else {
+                    // Bitrate field + 2-pass on a single row so Bitrate mode is the
+                    // same height as Quality mode — switching modes no longer changes
+                    // the content height, so the window doesn't resize/flash.
                     GridRow {
                         Text("Bitrate")
                         HStack(spacing: 8) {
@@ -162,12 +166,10 @@ struct ContentView: View {
                                 .multilineTextAlignment(.trailing)
                             Text("kbps").foregroundStyle(.secondary)
                             Spacer()
+                            Toggle("2-pass", isOn: $viewModel.settings.twoPass)
+                                .disabled(viewModel.settings.useHardware)
                         }
-                    }
-                    GridRow {
-                        Text("")
-                        Toggle("2-pass", isOn: $viewModel.settings.twoPass)
-                            .disabled(viewModel.settings.useHardware)
+                        .frame(height: 24)
                     }
                 }
             }
