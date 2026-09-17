@@ -115,6 +115,18 @@ public final class ConversionViewModel: ObservableObject {
         if !validAudio.contains(settings.audioCodec) {
             if let first = validAudio.first { settings.audioCodec = first }
         }
+        audioCodecChanged()
+    }
+
+    /// Called when the audio codec picker changes. Clamps the channel selection to
+    /// what the new encoder accepts: ffmpeg aborts the run on an unsupported layout
+    /// (e.g. 7.1 into E-AC-3) rather than down-mixing, so a stale selection left
+    /// over from a more capable codec would fail at conversion time.
+    public func audioCodecChanged() {
+        let allowed = CodecCompatibility.channelOptions(for: settings.audioCodec)
+        if !allowed.contains(settings.channels) {
+            settings.channels = allowed.last ?? .source
+        }
     }
 
     /// Called when the video codec picker changes. Resets CRF to the new codec's default
