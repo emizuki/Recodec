@@ -25,6 +25,7 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **Audio:** AAC, MP3, ALAC, Opus, FLAC, PCM, AC-3, E-AC-3 — or Copy.
 - **Controls:** per-codec quality (CRF), encoder preset, channels (up to 7.1 where the encoder supports it), audio bitrate (up to 1536 kbps), and optional VideoToolbox hardware encoding.
 - **Keep all tracks** (opt-in) — carry every audio, subtitle, and attachment stream through instead of one of each, transcoding only the first audio track.
+- **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them and tone maps to Rec.709 on VideoToolbox.
 - **Live iPhone-ready badge** that reflects your current settings.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
 
@@ -80,6 +81,31 @@ With *Keep all tracks* on, only the **first** audio track is transcoded; the res
 are copied. A disc remux that ships a lossless primary track plus an AC-3
 compatibility track keeps that second track byte-for-byte instead of re-encoding
 it lossy-to-lossy at the primary track's bitrate.
+
+## HDR sources
+
+iPhones record Dolby Vision / HLG by default, and the macOS Screenshots app
+records the screen in HDR (PQ, BT.2020, 10-bit) on an HDR-capable display.
+Both play back fine on the device that made them, but the moment such a clip
+is re-encoded without care — or just viewed on an SDR screen — the BT.2020
+pixels get interpreted as Rec.709 and the picture goes flat and grey.
+
+Recodec reads the video stream's transfer function when a file is loaded. If it
+is PQ or HLG the **HDR → Tone map to SDR** toggle switches itself on, and the
+conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
+on VideoToolbox before encoding: hardware decode where the codec allows,
+otherwise the software-decoded frames are uploaded to the GPU for the mapping
+step. The output is tagged Rec.709 throughout and the HDR mastering / content
+light level metadata is stripped, so players do not re-flag it as HDR.
+
+Notes:
+
+- Tone mapping needs the video re-encoded; it is greyed out for video **Copy**.
+- The toggle is only ever switched *on* automatically, never off, so a manual
+  choice survives adding more files to the batch. It is a no-op on SDR input.
+- If you mostly record for sharing, turn HDR off at the source instead:
+  Screenshots app → Options → HDR, or iPhone Settings → Camera → Record Video →
+  HDR Video.
 
 ## Requirements
 

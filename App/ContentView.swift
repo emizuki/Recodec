@@ -216,6 +216,21 @@ struct ContentView: View {
                     .disabled(viewModel.settings.videoCodec.hardwareEncoder == nil)
             }
             GridRow {
+                Text("HDR")
+                HStack(spacing: 8) {
+                    Toggle("Tone map to SDR", isOn: $viewModel.settings.toneMapHDR)
+                        .disabled(viewModel.settings.videoCodec == .copy
+                                  || viewModel.settings.videoCodec == .none)
+                        .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
+                              + "VideoToolbox, so it no longer looks washed out on SDR "
+                              + "displays. Requires re-encoding the video. "
+                              + "Switched on automatically when an HDR file is loaded.")
+                    if viewModel.hasHDRSource {
+                        Text("HDR source").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            GridRow {
                 Text("Streams")
                 Toggle("Keep all tracks", isOn: $viewModel.settings.preserveAllStreams)
                     .help("Map every stream from the source (all audio, subtitle and "

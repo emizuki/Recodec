@@ -146,4 +146,20 @@ final class ConversionSettingsTests: XCTestCase {
         s.audioCodec = .flac           // lossless, not modeled
         XCTAssertEqual(s.estimatedAudioKbps, 0)
     }
+
+    func testToneMapDefaultsOffAndRequiresAnEncoder() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25)
+        XCTAssertFalse(s.toneMapHDR, "opt-in: never on unless a source or the user turns it on")
+        XCTAssertFalse(s.effectiveToneMapHDR)
+        s.toneMapHDR = true
+        XCTAssertTrue(s.effectiveToneMapHDR)
+        s.videoCodec = .copy
+        XCTAssertFalse(s.effectiveToneMapHDR, "copy has nothing to tone map into")
+        s.videoCodec = .none
+        XCTAssertFalse(s.effectiveToneMapHDR)
+        s.videoCodec = .prores
+        XCTAssertTrue(s.effectiveToneMapHDR, "any real encoder qualifies, hardware or not")
+        s.container = .gif
+        XCTAssertFalse(s.effectiveToneMapHDR)
+    }
 }

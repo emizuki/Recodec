@@ -228,6 +228,10 @@ public struct ConversionSettings: Sendable, Equatable {
     public var preserveAllStreams: Bool
     /// Subtitle default-flag handling. Requires `preserveAllStreams`.
     public var subtitleDefault: SubtitleDefault
+    /// Tone map HDR (PQ/HLG, BT.2020) video to Rec.709 SDR via VideoToolbox's
+    /// `scale_vt`. Off by default; the view model switches it on when a loaded
+    /// source is HDR. Ignored for video copy/none.
+    public var toneMapHDR: Bool
 
     public init(container: Container, videoCodec: VideoCodec, audioCodec: AudioCodec,
                 crf: Int, channels: AudioChannels = .source,
@@ -235,7 +239,8 @@ public struct ConversionSettings: Sendable, Equatable {
                 preset: EncoderPreset = .slow, proResProfile: ProResProfile = .hq,
                 rateControl: RateControl = .quality, videoBitrateKbps: Int = 2000,
                 twoPass: Bool = true, preserveAllStreams: Bool = false,
-                subtitleDefault: SubtitleDefault = .unchanged) {
+                subtitleDefault: SubtitleDefault = .unchanged,
+                toneMapHDR: Bool = false) {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -250,6 +255,7 @@ public struct ConversionSettings: Sendable, Equatable {
         self.twoPass = twoPass
         self.preserveAllStreams = preserveAllStreams
         self.subtitleDefault = subtitleDefault
+        self.toneMapHDR = toneMapHDR
     }
 
     public static let iPhoneDefault = ConversionSettings(
@@ -276,6 +282,12 @@ extension ConversionSettings {
             if case .kbps(let k) = audioBitrate { return k }
             return 128
         }
+    }
+
+    /// Tone mapping needs the video decoded and re-encoded; copy/none/GIF have
+    /// no encoder to feed.
+    public var effectiveToneMapHDR: Bool {
+        toneMapHDR && videoCodec != .copy && videoCodec != .none && container != .gif
     }
 
     /// Estimated output size in bytes for bitrate mode, from the target video

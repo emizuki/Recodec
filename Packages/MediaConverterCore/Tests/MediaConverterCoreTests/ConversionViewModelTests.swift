@@ -308,4 +308,53 @@ final class ConversionViewModelTests: XCTestCase {
         vm.audioCodecChanged()
         XCTAssertEqual(vm.settings.channels, .stereo)
     }
+
+    // MARK: - HDR auto-detection
+
+    func testLoadingHDRSourceEnablesToneMap() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                    colorTransfer: "smpte2084") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        XCTAssertFalse(vm.settings.toneMapHDR)
+        XCTAssertFalse(vm.hasHDRSource)
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+        XCTAssertTrue(vm.hasHDRSource)
+    }
+
+    func testLoadingSDRSourceLeavesToneMapAlone() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac",
+                                    colorTransfer: "bt709") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR)
+        XCTAssertFalse(vm.hasHDRSource)
+
+        // A deliberate manual choice must survive adding more SDR files.
+        vm.settings.toneMapHDR = true
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr2.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+    }
+
+    func testAddingHDRToExistingSDRBatchEnablesToneMap() async {
+        let hdrPaths: Set<String> = ["/hdr.mov"]
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                          colorTransfer: hdrPaths.contains(url.path) ? "arib-std-b67" : "bt709")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR)
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR, "not only on first load — HDR can arrive later in the batch")
+    }
 }

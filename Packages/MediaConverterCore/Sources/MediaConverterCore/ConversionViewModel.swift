@@ -67,6 +67,17 @@ public final class ConversionViewModel: ObservableObject {
         if wasEmpty, let first = items.compactMap({ $0.info }).first {
             settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
         }
+        // HDR sources look washed out on SDR displays unless tone mapped, so switch
+        // it on the moment one turns up. Never switch it off automatically: the
+        // user may have enabled it deliberately, and it is a no-op for SDR input.
+        if items.contains(where: { $0.info?.isHDR == true }) {
+            settings.toneMapHDR = true
+        }
+    }
+
+    /// Whether any loaded source carries an HDR transfer function.
+    public var hasHDRSource: Bool {
+        items.contains { $0.info?.isHDR == true }
     }
 
     public func convertAll() async {

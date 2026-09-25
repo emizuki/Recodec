@@ -5,6 +5,18 @@ public enum ArgumentBuilder {
         max(1, min(100, 100 - crf * 2))
     }
 
+    /// VideoToolbox HDR→SDR filter graph. `hwupload` is a no-op for frames the
+    /// hardware decoder already produced and lifts software-decoded ones (VP9,
+    /// AV1 …) onto the device, so one graph serves every source codec.
+    static let toneMapFilter = [
+        "hwupload",
+        "scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709",
+        "hwdownload",
+        "format=p010le",
+        "sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA",
+        "sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL",
+    ].joined(separator: ",")
+
     /// Builds the ffmpeg command(s) for a conversion. Returns one command for
     /// every mode except software 2-pass bitrate, which returns `[pass1, pass2]`.
     /// `passLog` is the `-passlogfile` prefix (used only for 2-pass).
@@ -15,7 +27,15 @@ public enum ArgumentBuilder {
         }
 
         let mp4Family: Set<Container> = [.mp4, .mov, .m4v]
-        let inputArgs = ["-hide_banner", "-y", "-i", input]
+        let toneMap = s.effectiveToneMapHDR
+        // HDR→SDR runs on VideoToolbox: decode in hardware where the codec allows
+        // (`-hwaccel`), otherwise `hwupload` lifts software-decoded frames onto the
+        // device declared by `-init_hw_device`. Both forms need the same input flags.
+        let hwInput: [String] = toneMap
+            ? ["-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt",
+               "-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"]
+            : []
+        let inputArgs = ["-hide_banner", "-y"] + hwInput + ["-i", input]
 
         // Video encode args (codec + rate control + preset + pix_fmt + profile).
         // `videoTag` (container hvc1) is kept separate so pass 1 can omit it.
@@ -65,6 +85,19 @@ public enum ArgumentBuilder {
             if s.videoCodec == .hevc, mp4Family.contains(s.container) {
                 videoTag = ["-tag:v", "hvc1"]
             }
+        }
+
+        if toneMap {
+            // `scale_vt` is Apple's tone mapper (the same one QuickTime uses). It
+            // returns 10-bit VT frames, so download via p010le — nv12 is rejected —
+            // and let the encoder's own `-pix_fmt` narrow to 8-bit where wanted.
+            // hwdownload leaves the bt2020nc matrix tag on bt709 pixels and passes
+            // the HDR mastering/CLL side data through, which makes players
+            // misinterpret chroma or re-flag the file as HDR: drop the side data
+            // in the graph and stamp the encoder colour tags explicitly.
+            videoEncode += ["-vf", Self.toneMapFilter,
+                            "-colorspace", "bt709", "-color_primaries", "bt709",
+                            "-color_trc", "bt709"]
         }
 
         var audioArgs: [String] = []
