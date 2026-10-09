@@ -52,6 +52,80 @@ final class ConversionViewModelTests: XCTestCase {
         }
     }
 
+    func testClearAllDuringSuccessfulProbeKeepsFilesRemoved() async {
+        var duringProbe: (() -> Void)?
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in
+                duringProbe?()
+                return MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac")
+            },
+            toolsAvailable: true)
+        duringProbe = { [weak vm] in vm?.clearAll() }
+
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+
+        XCTAssertEqual(vm.items, [])
+    }
+
+    func testClearAllDuringFailedProbeKeepsFilesRemoved() async {
+        var duringProbe: (() -> Void)?
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in
+                duringProbe?()
+                throw NSError(domain: "probe", code: 1)
+            },
+            toolsAvailable: true)
+        duringProbe = { [weak vm] in vm?.clearAll() }
+
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+
+        XCTAssertEqual(vm.items, [])
+    }
+
+    func testRemovingEarlierFileDuringProbeUpdatesRemainingFile() async {
+        var duringProbe: (() -> Void)?
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                duringProbe?()
+                return MediaInfo(durationSeconds: url.path == "/a.mov" ? 5 : 10)
+            },
+            toolsAvailable: true)
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+        let removedID = vm.items[0].id
+        duringProbe = { [weak vm] in vm?.removeItem(id: removedID) }
+
+        await vm.loadFiles([URL(fileURLWithPath: "/b.mov")])
+
+        XCTAssertEqual(vm.items.map(\.url.path), ["/b.mov"])
+        XCTAssertEqual(vm.items.first?.info?.durationSeconds, 10)
+        XCTAssertEqual(vm.items.first?.status, .ready)
+    }
+
+    func testRemovedProbeDoesNotOverwriteReplacementFile() async {
+        var duringProbe: ((URL) async -> Void)?
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                await duringProbe?(url)
+                return MediaInfo(durationSeconds: url.path == "/a.mov" ? 5 : 10)
+            },
+            toolsAvailable: true)
+        duringProbe = { [weak vm] url in
+            guard url.path == "/a.mov", let vm = vm else { return }
+            vm.removeItem(id: vm.items[0].id)
+            await vm.loadFiles([URL(fileURLWithPath: "/b.mov")])
+        }
+
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+
+        XCTAssertEqual(vm.items.map(\.url.path), ["/b.mov"])
+        XCTAssertEqual(vm.items.first?.info?.durationSeconds, 10)
+        XCTAssertEqual(vm.items.first?.status, .ready)
+    }
+
     func testCompatibilityUsesFirstItem() async {
         let vm = ConversionViewModel(
             engine: FakeEngine(),

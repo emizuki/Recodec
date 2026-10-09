@@ -59,6 +59,8 @@ The trade-off is one extra step — `brew install ffmpeg`. Realistically, if you
 3. Choose a format, codec, and quality; keep an eye on the **iPhone-ready** badge.
 4. Click **Convert**. Converted files are written next to the originals.
 
+Files can be removed individually or with **Clear All** while metadata is loading. Results arriving after a file is removed are ignored.
+
 ## Build from source
 
 Recodec uses [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the Xcode project, and keeps its logic in a Swift package (`MediaConverterCore`) covered by tests.
