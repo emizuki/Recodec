@@ -3,6 +3,123 @@ import XCTest
 
 final class ArgumentBuilderTests: XCTestCase {
     let src = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac")
+    /// A multi-track source: 3 subtitle streams, English second.
+    let multiTrack = MediaInfo(durationSeconds: 10, videoCodecName: "hevc",
+                               audioCodecName: "truehd",
+                               subtitleLanguages: ["ger", "eng", "fre"])
+
+    // MARK: - Stream preservation (opt-in)
+
+    func testPreserveAllStreamsOffEmitsNoMapping() {
+        // Regression guard: the default path must stay byte-identical to the
+        // behaviour that shipped before stream preservation existed.
+        let s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3,
+                                   crf: 20, channels: .surround51, audioBitrate: .kbps(1536))
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)
+        XCTAssertEqual(args, [[
+            "-hide_banner", "-y", "-i", "/in.mkv",
+            "-c:v", "copy",
+            "-c:a", "eac3", "-b:a", "1536k", "-ac", "6",
+            "/out.mkv"
+        ]])
+        XCTAssertFalse(args[0].contains("-map"))
+        XCTAssertFalse(args[0].contains("-disposition:s"))
+    }
+
+    func testPreserveAllStreamsMapsEverythingAndCopiesSubs() {
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3,
+                                   crf: 20, channels: .surround51, audioBitrate: .kbps(1536))
+        s.preserveAllStreams = true
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)
+        XCTAssertEqual(args, [[
+            "-hide_banner", "-y", "-i", "/in.mkv",
+            "-c:v", "copy",
+            "-c:a", "copy", "-c:a:0", "eac3", "-b:a:0", "1536k", "-ac:a:0", "6",
+            "-map", "0", "-c:s", "copy",
+            "/out.mkv"
+        ]])
+    }
+
+    func testPreserveAllStreamsTranscodesOnlyFirstAudioTrack() {
+        // Regression: a bare `-c:a eac3` applies to every mapped audio stream, so a
+        // secondary AC-3 track gets re-encoded lossy->lossy at the primary bitrate.
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3,
+                                   crf: 20, channels: .surround51, audioBitrate: .kbps(1536))
+        s.preserveAllStreams = true
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)[0]
+        // Every encode option must be stream-qualified, and `-c:a copy` must precede it.
+        XCTAssertTrue(args.contains("-c:a:0"))
+        XCTAssertTrue(args.contains("-b:a:0"))
+        XCTAssertTrue(args.contains("-ac:a:0"))
+        XCTAssertFalse(args.contains("-b:a"), "unqualified -b:a would hit every audio stream")
+        XCTAssertFalse(args.contains("-ac"), "unqualified -ac would hit every audio stream")
+        let cIdx = args.firstIndex(of: "-c:a")!
+        XCTAssertEqual(args[cIdx + 1], "copy")
+        XCTAssertLessThan(cIdx, args.firstIndex(of: "-c:a:0")!)
+    }
+
+    func testPreserveAllStreamsWithCopyAudioIsUnqualified() {
+        // Audio: Copy needs no per-stream override — everything is copied anyway.
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        s.preserveAllStreams = true
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)[0]
+        XCTAssertFalse(args.contains("-c:a:0"))
+        XCTAssertTrue(args.contains("-c:a"))
+    }
+
+    func testSubtitleDefaultByLanguageUsesSubtitleRelativeIndex() {
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        s.preserveAllStreams = true
+        s.subtitleDefault = .language("eng")
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)
+        // "eng" is the 2nd subtitle stream -> index 1, not its absolute stream index.
+        XCTAssertEqual(args[0].suffix(7),
+                       ["-map", "0", "-c:s", "copy",
+                        "-disposition:s", "0", "-disposition:s:1", "default", "/out.mkv"].suffix(7))
+    }
+
+    func testSubtitleDefaultLanguageMissingClearsOnly() {
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        s.preserveAllStreams = true
+        s.subtitleDefault = .language("jpn")
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)
+        XCTAssertTrue(args[0].contains("-disposition:s"))
+        XCTAssertFalse(args[0].contains(where: { $0.hasPrefix("-disposition:s:") }))
+    }
+
+    func testSubtitleDefaultNoneClearsAll() {
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        s.preserveAllStreams = true
+        s.subtitleDefault = .none
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)
+        XCTAssertEqual(args[0].suffix(3), ["-disposition:s", "0", "/out.mkv"])
+    }
+
+    func testPreserveAllStreamsDropsSubsForAudioOnlyContainer() {
+        var s = ConversionSettings(container: .m4a, videoCodec: .none, audioCodec: .alac, crf: 20)
+        s.preserveAllStreams = true
+        s.subtitleDefault = .language("eng")
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.m4a",
+                                         source: multiTrack)
+        XCTAssertTrue(args[0].contains("-sn"))
+        XCTAssertFalse(args[0].contains("-c:s"))
+        XCTAssertFalse(args[0].contains("-disposition:s"))
+    }
+
+    func testSurround71EmitsAc8() {
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .flac, crf: 20)
+        s.channels = .surround71
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                         source: multiTrack)
+        XCTAssertEqual(args[0].suffix(3), ["-ac", "8", "/out.mkv"])
+    }
 
     func testH264SoftwareToMP4() {
         let s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)

@@ -355,4 +355,31 @@ final class ConversionViewModelTests: XCTestCase {
         vm.clearAll()
         XCTAssertTrue(vm.items.isEmpty)
     }
+    func testAudioCodecChangeClampsChannelsDownFrom71() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "truehd") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.container = .mkv
+        vm.settings.audioCodec = .flac
+        vm.settings.channels = .surround71
+        vm.settings.audioCodec = .eac3
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.channels, .surround51,
+                       "7.1 must clamp to 5.1 when switching to an encoder that caps there")
+    }
+
+    func testAudioCodecChangeLeavesValidChannelsAlone() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "truehd") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.container = .mkv
+        vm.settings.audioCodec = .eac3
+        vm.settings.channels = .stereo
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.channels, .stereo)
+    }
 }
