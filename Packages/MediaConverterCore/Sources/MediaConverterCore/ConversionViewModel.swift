@@ -55,11 +55,14 @@ public final class ConversionViewModel: ObservableObject {
             items.append(InputItem(url: url))
             let index = items.count - 1
             items[index].status = .probing
+            let id = items[index].id
             do {
                 let info = try await probe(url)
+                guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
                 items[index].info = info
                 items[index].status = .ready
             } catch {
+                guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
                 items[index].status = .failed("Couldn't read this file")
             }
         }
