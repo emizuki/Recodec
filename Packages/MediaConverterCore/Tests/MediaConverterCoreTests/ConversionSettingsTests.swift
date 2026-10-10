@@ -68,10 +68,29 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertFalse(VideoCodec.none.supportsPreset)
     }
 
-    func testAudioBitratePresetsUpTo640() {
+    func testAudioBitratePresetsUpTo1536() {
         let kbps = AudioBitrate.presets.compactMap { if case .kbps(let k) = $0 { return k } else { return nil } }
-        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640])
+        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640, 768, 1024, 1536])
         XCTAssertEqual(AudioBitrate.presets.first, .auto)
+    }
+
+    func testStreamPreservationDefaultsOff() {
+        let s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3, crf: 20)
+        XCTAssertFalse(s.preserveAllStreams)
+        XCTAssertEqual(s.subtitleDefault, .unchanged)
+    }
+
+    func testSurround71ChannelCount() {
+        XCTAssertEqual(AudioChannels.surround71.count, 8)
+        XCTAssertEqual(AudioChannels.surround51.count, 6)
+        XCTAssertNil(AudioChannels.source.count)
+    }
+
+    func testContainerSubtitleSupport() {
+        XCTAssertTrue(Container.mkv.supportsSubtitles)
+        XCTAssertTrue(Container.mp4.supportsSubtitles)
+        XCTAssertFalse(Container.m4a.supportsSubtitles)
+        XCTAssertFalse(Container.gif.supportsSubtitles)
     }
 
     func testDefaultRateControlIsQuality() {
@@ -126,5 +145,21 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertEqual(s.estimatedAudioKbps, 128)
         s.audioCodec = .flac           // lossless, not modeled
         XCTAssertEqual(s.estimatedAudioKbps, 0)
+    }
+
+    func testToneMapDefaultsOffAndRequiresAnEncoder() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25)
+        XCTAssertFalse(s.toneMapHDR, "opt-in: never on unless a source or the user turns it on")
+        XCTAssertFalse(s.effectiveToneMapHDR)
+        s.toneMapHDR = true
+        XCTAssertTrue(s.effectiveToneMapHDR)
+        s.videoCodec = .copy
+        XCTAssertFalse(s.effectiveToneMapHDR, "copy has nothing to tone map into")
+        s.videoCodec = .none
+        XCTAssertFalse(s.effectiveToneMapHDR)
+        s.videoCodec = .prores
+        XCTAssertTrue(s.effectiveToneMapHDR, "any real encoder qualifies, hardware or not")
+        s.container = .gif
+        XCTAssertFalse(s.effectiveToneMapHDR)
     }
 }

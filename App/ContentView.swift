@@ -126,7 +126,10 @@ struct ContentView: View {
             GridRow {
                 Text("Audio")
                 let validAudio = CodecCompatibility.audioCodecs(for: viewModel.settings.container)
-                Picker("", selection: $viewModel.settings.audioCodec) {
+                Picker("", selection: Binding(
+                    get: { viewModel.settings.audioCodec },
+                    set: { viewModel.settings.audioCodec = $0; viewModel.audioCodecChanged() }
+                )) {
                     ForEach(validAudio, id: \.self) { Text(label($0)).tag($0) }
                 }
                 .labelsHidden()
@@ -195,8 +198,11 @@ struct ContentView: View {
             GridRow {
                 Text("Channels")
                 Picker("", selection: $viewModel.settings.channels) {
-                    ForEach(AudioChannels.allCases, id: \.self) { Text(label($0)).tag($0) }
-                }.labelsHidden().disabled(!audioReencoding)
+                    ForEach(CodecCompatibility.channelOptions(for: viewModel.settings.audioCodec),
+                            id: \.self) { Text(label($0)).tag($0) }
+                }
+                .labelsHidden()
+                .disabled(!audioReencoding)
             }
             GridRow {
                 Text("Audio bitrate")
@@ -208,6 +214,37 @@ struct ContentView: View {
                 Text("Hardware")
                 Toggle("Use VideoToolbox", isOn: $viewModel.settings.useHardware)
                     .disabled(viewModel.settings.videoCodec.hardwareEncoder == nil)
+            }
+            GridRow {
+                Text("HDR")
+                HStack(spacing: 8) {
+                    Toggle("Tone map to SDR", isOn: $viewModel.settings.toneMapHDR)
+                        .disabled(viewModel.settings.videoCodec == .copy
+                                  || viewModel.settings.videoCodec == .none)
+                        .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
+                              + "VideoToolbox, so it no longer looks washed out on SDR "
+                              + "displays. Requires re-encoding the video. "
+                              + "Switched on automatically when an HDR file is loaded.")
+                    if viewModel.hasHDRSource {
+                        Text("HDR source").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            GridRow {
+                Text("Streams")
+                Toggle("Keep all tracks", isOn: $viewModel.settings.preserveAllStreams)
+                    .help("Map every stream from the source (all audio, subtitle and "
+                          + "attachment tracks) instead of only the first of each kind. "
+                          + "The target container must be able to hold them.")
+            }
+            GridRow {
+                Text("Default subtitle")
+                Picker("", selection: $viewModel.settings.subtitleDefault) {
+                    ForEach(SubtitleDefault.presets, id: \.self) { Text(label($0)).tag($0) }
+                }
+                .labelsHidden()
+                .disabled(!viewModel.settings.preserveAllStreams
+                          || !viewModel.settings.container.supportsSubtitles)
             }
         }
     }
@@ -301,8 +338,20 @@ struct ContentView: View {
         case .mono:       return "Mono"
         case .stereo:     return "Stereo"
         case .surround51: return "5.1"
+        case .surround71: return "7.1"
         }
     }
+    private func label(_ s: SubtitleDefault) -> String {
+        switch s {
+        case .unchanged:        return "Unchanged"
+        case .none:             return "None"
+        case .language(let c):  return Self.languageNames[c] ?? c.uppercased()
+        }
+    }
+    private static let languageNames: [String: String] = [
+        "eng": "English", "ger": "German", "fre": "French",
+        "spa": "Spanish", "ita": "Italian",
+    ]
     private func label(_ b: AudioBitrate) -> String {
         switch b {
         case .auto:         return "Auto (encoder default)"

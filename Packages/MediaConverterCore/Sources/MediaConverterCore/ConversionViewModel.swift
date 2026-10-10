@@ -70,6 +70,17 @@ public final class ConversionViewModel: ObservableObject {
         if wasEmpty, let first = items.compactMap({ $0.info }).first {
             settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
         }
+        // HDR sources look washed out on SDR displays unless tone mapped, so switch
+        // it on the moment one turns up. Never switch it off automatically: the
+        // user may have enabled it deliberately, and it is a no-op for SDR input.
+        if items.contains(where: { $0.info?.isHDR == true }) {
+            settings.toneMapHDR = true
+        }
+    }
+
+    /// Whether any loaded source carries an HDR transfer function.
+    public var hasHDRSource: Bool {
+        items.contains { $0.info?.isHDR == true }
     }
 
     public func convertAll() async {
@@ -117,6 +128,18 @@ public final class ConversionViewModel: ObservableObject {
         let validAudio = CodecCompatibility.audioCodecs(for: settings.container)
         if !validAudio.contains(settings.audioCodec) {
             if let first = validAudio.first { settings.audioCodec = first }
+        }
+        audioCodecChanged()
+    }
+
+    /// Called when the audio codec picker changes. Clamps the channel selection to
+    /// what the new encoder accepts: ffmpeg aborts the run on an unsupported layout
+    /// (e.g. 7.1 into E-AC-3) rather than down-mixing, so a stale selection left
+    /// over from a more capable codec would fail at conversion time.
+    public func audioCodecChanged() {
+        let allowed = CodecCompatibility.channelOptions(for: settings.audioCodec)
+        if !allowed.contains(settings.channels) {
+            settings.channels = allowed.last ?? .source
         }
     }
 
