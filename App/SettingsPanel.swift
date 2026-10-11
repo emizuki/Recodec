@@ -153,7 +153,7 @@ struct SettingsPanel: View {
             .frame(height: Self.rowHeight)
         } else {
             HStack(spacing: 8) {
-                TextField("Video bitrate", value: bitrateKbpsBinding, format: .number)
+                TextField("Video bitrate", value: bitrateKbpsBinding, format: WholeNumberFormat())
                     .labelsHidden()
                     .frame(width: 72)
                     .multilineTextAlignment(.trailing)
@@ -331,6 +331,25 @@ struct SettingsPanel: View {
         switch b {
         case .auto:         return "Auto (encoder default)"
         case .kbps(let k):  return "\(k) kbps"
+        }
+    }
+}
+
+/// A whole number shown without a thousands separator, read by keeping only its digits.
+/// `.number` follows the Mac's region: where that groups with a dot (en_VN, de_DE) 2000
+/// shows as "2.000", which reads as 2 kbps. `.number.grouping(.never)` fixes the display but
+/// then reads a typed "2.500" or "4,000" as 2 or 4, so the parsing is done here instead.
+private struct WholeNumberFormat: ParseableFormatStyle {
+    func format(_ value: Int) -> String { String(value) }
+
+    var parseStrategy: Strategy { Strategy() }
+
+    struct Strategy: ParseStrategy {
+        func parse(_ value: String) throws -> Int {
+            guard let number = Int(value.filter(\.isASCII).filter(\.isNumber)) else {
+                throw CocoaError(.formatting)
+            }
+            return number
         }
     }
 }
