@@ -30,13 +30,16 @@ public enum IPhoneCompatibilityChecker {
             return .init(isCompatible: false,
                          reason: "\(s.container.fileExtension.uppercased()) files don't play on iPhone")
         }
-        if !s.container.isAudioOnly && s.videoCodec != .none {
+        // Copy of a stream the source lacks copies nothing (a silent recording, an audio-only
+        // file), so only a stream that is there can make the output unplayable.
+        if !s.container.isAudioOnly && s.videoCodec != .none
+            && !(s.videoCodec == .copy && source.videoCodecName == nil) {
             let name = (s.videoCodec == .copy) ? source.videoCodecName : s.videoCodec.canonicalName
             if !(name.map(videoCodecs.contains) ?? false) {
                 return .init(isCompatible: false, reason: videoReason(s.videoCodec, source: source))
             }
         }
-        if s.audioCodec != .none {
+        if s.audioCodec != .none && !(s.audioCodec == .copy && source.audioCodecName == nil) {
             let name = (s.audioCodec == .copy) ? source.audioCodecName : s.audioCodec.canonicalName
             if !(name.map(audioCodecs.contains) ?? false) {
                 return .init(isCompatible: false, reason: audioReason(s.audioCodec, source: source))
