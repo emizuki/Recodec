@@ -11,6 +11,11 @@ public enum Container: String, CaseIterable, Sendable {
     public var supportsFaststart: Bool {
         switch self { case .mp4, .mov, .m4v, .m4a: return true; default: return false }
     }
+    /// Containers that can carry subtitle streams at all. Audio-only containers
+    /// and GIF cannot, so mapping every source stream into them must drop subs.
+    public var supportsSubtitles: Bool {
+        switch self { case .mp4, .mov, .m4v, .mkv, .webm: return true; default: return false }
+    }
 }
 
 public enum EncoderPreset: String, CaseIterable, Sendable {
@@ -149,7 +154,7 @@ public enum AudioCodec: String, CaseIterable, Sendable {
 }
 
 public enum AudioChannels: String, CaseIterable, Sendable {
-    case source, mono, stereo, surround51
+    case source, mono, stereo, surround51, surround71
 
     /// nil = do not pass `-ac` (keep source channel count).
     public var count: Int? {
@@ -158,6 +163,7 @@ public enum AudioChannels: String, CaseIterable, Sendable {
         case .mono:       return 1
         case .stereo:     return 2
         case .surround51: return 6
+        case .surround71: return 8
         }
     }
 }
@@ -176,11 +182,30 @@ public enum AudioBitrate: Sendable, Equatable, Hashable {
     public static let presets: [AudioBitrate] = [
         .auto, .kbps(96), .kbps(128), .kbps(160), .kbps(192), .kbps(256),
         .kbps(320), .kbps(384), .kbps(448), .kbps(512), .kbps(640),
+        .kbps(768), .kbps(1024), .kbps(1536),
     ]
 }
 
 public enum RateControl: String, CaseIterable, Sendable {
     case quality, bitrate
+}
+
+/// Which subtitle track, if any, is marked as the default one in the output.
+/// Only consulted when `preserveAllStreams` is on, since without stream mapping
+/// there is at most one subtitle track to flag.
+public enum SubtitleDefault: Sendable, Equatable, Hashable {
+    /// Leave every disposition exactly as ffmpeg's stream copy produced it.
+    case unchanged
+    /// Clear `default` on all subtitle tracks, then set it on the first track
+    /// whose language tag matches (case-insensitive ISO 639-2, e.g. "eng").
+    case language(String)
+    /// Clear `default` on every subtitle track.
+    case none
+
+    public static let presets: [SubtitleDefault] = [
+        .unchanged, .none, .language("eng"), .language("ger"),
+        .language("fre"), .language("spa"), .language("ita"),
+    ]
 }
 
 public struct ConversionSettings: Sendable, Equatable {
@@ -196,13 +221,21 @@ public struct ConversionSettings: Sendable, Equatable {
     public var rateControl: RateControl
     public var videoBitrateKbps: Int
     public var twoPass: Bool
+    /// Map every stream from the source instead of letting ffmpeg pick one of
+    /// each kind. Off by default: it changes long-standing output behaviour and
+    /// can fail when the target container cannot hold every source stream
+    /// (e.g. PGS subtitles in MP4).
+    public var preserveAllStreams: Bool
+    /// Subtitle default-flag handling. Requires `preserveAllStreams`.
+    public var subtitleDefault: SubtitleDefault
 
     public init(container: Container, videoCodec: VideoCodec, audioCodec: AudioCodec,
                 crf: Int, channels: AudioChannels = .source,
                 audioBitrate: AudioBitrate = .auto, useHardware: Bool = false,
                 preset: EncoderPreset = .slow, proResProfile: ProResProfile = .hq,
                 rateControl: RateControl = .quality, videoBitrateKbps: Int = 2000,
-                twoPass: Bool = true) {
+                twoPass: Bool = true, preserveAllStreams: Bool = false,
+                subtitleDefault: SubtitleDefault = .unchanged) {
         self.container = container
         self.videoCodec = videoCodec
         self.audioCodec = audioCodec
@@ -215,6 +248,8 @@ public struct ConversionSettings: Sendable, Equatable {
         self.rateControl = rateControl
         self.videoBitrateKbps = videoBitrateKbps
         self.twoPass = twoPass
+        self.preserveAllStreams = preserveAllStreams
+        self.subtitleDefault = subtitleDefault
     }
 
     public static let iPhoneDefault = ConversionSettings(

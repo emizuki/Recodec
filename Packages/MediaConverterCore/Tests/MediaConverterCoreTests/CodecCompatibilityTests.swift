@@ -161,4 +161,33 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertTrue(a.contains(.ac3))
         XCTAssertFalse(a.contains(.mp3), "ipod muxer rejects MP3 in .m4v")
     }
+
+    func testChannelOptionsMatchEncoderLimits() {
+        // Measured against ffmpeg 9.0.1; see CodecCompatibility.channelOptions.
+        XCTAssertEqual(CodecCompatibility.channelOptions(for: .mp3), [.source, .mono, .stereo])
+        XCTAssertFalse(CodecCompatibility.channelOptions(for: .eac3).contains(.surround71))
+        XCTAssertFalse(CodecCompatibility.channelOptions(for: .ac3).contains(.surround71))
+        XCTAssertFalse(CodecCompatibility.channelOptions(for: .alac).contains(.surround71))
+        XCTAssertTrue(CodecCompatibility.channelOptions(for: .eac3).contains(.surround51))
+        XCTAssertTrue(CodecCompatibility.channelOptions(for: .flac).contains(.surround71))
+        XCTAssertTrue(CodecCompatibility.channelOptions(for: .aac).contains(.surround71))
+        XCTAssertEqual(CodecCompatibility.channelOptions(for: .copy), [.source])
+    }
+
+    func testEAC3With71IsRejectedAsInvalidCombo() {
+        // Regression: ffmpeg aborts with "Specified channel layout '7.1' is not
+        // supported by the eac3 encoder", so the combo must not be valid.
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3,
+                                   crf: 20, audioBitrate: .kbps(1536))
+        s.channels = .surround71
+        XCTAssertFalse(CodecCompatibility.isValidCombo(s))
+        s.channels = .surround51
+        XCTAssertTrue(CodecCompatibility.isValidCombo(s))
+    }
+
+    func testFLAC71IsValid() {
+        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .flac, crf: 20)
+        s.channels = .surround71
+        XCTAssertTrue(CodecCompatibility.isValidCombo(s))
+    }
 }

@@ -23,9 +23,63 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **Containers:** MP4, MOV, M4V, MKV, WebM, M4A, MP3, GIF, FLAC, WAV.
 - **Video:** H.264, HEVC, AV1, VP9, ProRes — or **Copy** (passthrough, no re-encode).
 - **Audio:** AAC, MP3, ALAC, Opus, FLAC, PCM, AC-3, E-AC-3 — or Copy.
-- **Controls:** per-codec quality (CRF), encoder preset, channels, audio bitrate, and optional VideoToolbox hardware encoding.
+- **Controls:** per-codec quality (CRF), encoder preset, channels (up to 7.1 where the encoder supports it), audio bitrate (up to 1536 kbps), and optional VideoToolbox hardware encoding.
+- **Keep all tracks** (opt-in) — carry every audio, subtitle, and attachment stream through instead of one of each, transcoding only the first audio track.
 - **Live iPhone-ready badge** that reflects your current settings.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
+
+## Multi-track sources
+
+By default Recodec lets ffmpeg pick the streams, which means **one video, one
+audio, and one subtitle track** — ffmpeg's standard stream selection. For a
+single-track source that is exactly right, and it stays the default so existing
+conversions produce byte-identical output.
+
+A disc remux is usually not a single-track source. Turn on **Streams → Keep all
+tracks** and Recodec maps every stream from the input instead, copying subtitles
+through untouched (they are re-muxed, never re-encoded). Chapters are preserved
+either way.
+
+Two things to know:
+
+- The target container has to be able to hold what you map into it. MKV takes
+  essentially anything; MP4 cannot store Blu-ray bitmap subtitles (PGS/VobSub)
+  or SubRip, so *Keep all tracks* into MP4 will abort on a disc remux — use MKV
+  for those. Audio-only targets (M4A, MP3, FLAC, WAV) and GIF drop subtitles
+  automatically rather than failing the run.
+- **Default subtitle** sets which subtitle track a player selects on its own. It
+  needs *Keep all tracks*, because without mapping there is at most one subtitle
+  track to flag. Picking a language clears the default flag on every subtitle
+  stream first, then sets it on the first track matching that language — so a
+  source shipping two "default" tracks does not carry the conflict through.
+  Leave it on *Unchanged* to preserve whatever the source declared.
+
+### Lossless and HD audio
+
+The bitrate list goes to 1536 kbps and channels to 7.1, which matters when a
+playback target cannot decode the source codec. The Plex tvOS client, for
+example, only Direct Plays `aac`, `ac3`, and `eac3` — hand it TrueHD or FLAC and
+the server transcodes, typically down to 640 kbps E-AC-3. Pre-encoding the track
+yourself to E-AC-3 at 1536 kbps avoids the server-side transcode and keeps
+considerably more of the source than the automatic one would.
+
+The channel picker only offers what the selected encoder accepts, because ffmpeg
+aborts on an unsupported layout rather than down-mixing. AC-3 and E-AC-3 stop at
+5.1 (7.1 Dolby Digital Plus needs Dolby's own encoder, which ffmpeg does not
+ship), MP3 is stereo-only, and ALAC is capped at 5.1 here — its 8-channel layout
+is `7.1(wide)`, which routes the side channels to front-wide speakers and would
+mislabel a standard 7.1 mix. AAC, Opus, FLAC and PCM take the full 7.1. Changing
+codec clamps an out-of-range selection down rather than failing at convert time.
+
+For genuinely lossless output, pair **Video: Copy** with **Audio: FLAC** in MKV:
+the video is passed through untouched and the audio is re-encoded without loss
+(ffmpeg's TrueHD decoder is bit-exact, and FLAC stores an MD5 of its source PCM
+so you can verify the result).
+
+With *Keep all tracks* on, only the **first** audio track is transcoded; the rest
+are copied. A disc remux that ships a lossless primary track plus an AC-3
+compatibility track keeps that second track byte-for-byte instead of re-encoding
+it lossy-to-lossy at the primary track's bitrate.
 
 ## Requirements
 

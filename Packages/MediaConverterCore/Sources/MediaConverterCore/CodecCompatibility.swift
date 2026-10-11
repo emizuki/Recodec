@@ -41,5 +41,32 @@ public enum CodecCompatibility {
         if settings.container == .gif { return true }
         return videoCodecs(for: settings.container).contains(settings.videoCodec)
             && audioCodecs(for: settings.container).contains(settings.audioCodec)
+            && channelOptions(for: settings.audioCodec).contains(settings.channels)
+    }
+
+    /// Channel layouts each audio encoder actually accepts. ffmpeg aborts the run
+    /// with "Specified channel layout is not supported by the <x> encoder" rather
+    /// than down-mixing, so unsupported combinations must not be offered.
+    ///
+    /// Measured against ffmpeg 9.0.1 (`ffmpeg -h encoder=<name>`):
+    ///   - mp3: mono/stereo only.
+    ///   - ac3 / eac3: up to 5.1. 7.1 E-AC-3 (Dolby Digital Plus) requires
+    ///     Dolby's own encoder, which ffmpeg does not ship.
+    ///   - alac: has no standard 7.1; its 8-channel layout is 7.1(wide), which
+    ///     places the side channels as front-wide. Offering it as "7.1" would
+    ///     mislabel the output, so ALAC is capped at 5.1 here.
+    ///   - aac / opus / flac / pcm: accept 8 channels.
+    public static func channelOptions(for codec: AudioCodec) -> [AudioChannels] {
+        switch codec {
+        case .mp3:
+            return [.source, .mono, .stereo]
+        case .ac3, .eac3, .alac:
+            return [.source, .mono, .stereo, .surround51]
+        case .aac, .opus, .flac, .pcm:
+            return AudioChannels.allCases
+        case .copy, .none:
+            // No encoder runs, so `-ac` is never emitted; keep the picker inert.
+            return [.source]
+        }
     }
 }

@@ -68,10 +68,29 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertFalse(VideoCodec.none.supportsPreset)
     }
 
-    func testAudioBitratePresetsUpTo640() {
+    func testAudioBitratePresetsUpTo1536() {
         let kbps = AudioBitrate.presets.compactMap { if case .kbps(let k) = $0 { return k } else { return nil } }
-        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640])
+        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640, 768, 1024, 1536])
         XCTAssertEqual(AudioBitrate.presets.first, .auto)
+    }
+
+    func testStreamPreservationDefaultsOff() {
+        let s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3, crf: 20)
+        XCTAssertFalse(s.preserveAllStreams)
+        XCTAssertEqual(s.subtitleDefault, .unchanged)
+    }
+
+    func testSurround71ChannelCount() {
+        XCTAssertEqual(AudioChannels.surround71.count, 8)
+        XCTAssertEqual(AudioChannels.surround51.count, 6)
+        XCTAssertNil(AudioChannels.source.count)
+    }
+
+    func testContainerSubtitleSupport() {
+        XCTAssertTrue(Container.mkv.supportsSubtitles)
+        XCTAssertTrue(Container.mp4.supportsSubtitles)
+        XCTAssertFalse(Container.m4a.supportsSubtitles)
+        XCTAssertFalse(Container.gif.supportsSubtitles)
     }
 
     func testDefaultRateControlIsQuality() {
