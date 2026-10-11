@@ -455,4 +455,85 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.loadFiles([URL(fileURLWithPath: "/hdr3.mov")])
         XCTAssertTrue(vm.settings.toneMapHDR)
     }
+
+    /// A load that started before the HDR file arrived must not undo the user's manual
+    /// off when it finally finishes: the decision is taken as each result lands.
+    func testManualOffSurvivesAnOverlappingSlowLoad() async {
+        let gate = ProbeGate()
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                if url.lastPathComponent == "slow.mov" { await gate.wait() }
+                return MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                 colorTransfer: url.lastPathComponent.hasPrefix("hdr") ? "smpte2084" : "bt709")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        let slow = Task { await vm.loadFiles([URL(fileURLWithPath: "/slow.mov")]) }
+        while vm.items.isEmpty { await Task.yield() }
+
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+        vm.settings.toneMapHDR = false
+
+        await gate.open()
+        await slow.value
+        XCTAssertFalse(vm.settings.toneMapHDR, "the slow SDR load finishing must not re-enable it")
+    }
+
+    func testRemovedHDRFileDoesNotEnableToneMap() async {
+        let gate = ProbeGate()
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in
+                await gate.wait()
+                return MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                 colorTransfer: "smpte2084")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        let load = Task { await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")]) }
+        while vm.items.isEmpty { await Task.yield() }
+        vm.clearAll()
+        await gate.open()
+        await load.value
+        XCTAssertTrue(vm.items.isEmpty)
+        XCTAssertFalse(vm.settings.toneMapHDR, "a file the user already removed is not a source")
+    }
+
+    /// Regression: with an AAC source the first load switches Audio to Copy, whose only
+    /// valid channel layout is "same as source". A Stereo pick made earlier must be
+    /// reset, or the combo check rejects every file in the batch.
+    func testStereoPickedBeforeLoadDoesNotFailAACSourceOnCopy() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.channels = .stereo
+        await vm.loadFiles([URL(fileURLWithPath: "/clip.mov")])
+        XCTAssertEqual(vm.settings.audioCodec, .copy)
+
+        await vm.convertAll()
+        XCTAssertEqual(engine.convertCount, 1)
+        if case .done = vm.items[0].status {} else {
+            XCTFail("expected the file to convert, got \(vm.items[0].status)")
+        }
+    }
+}
+
+/// Holds probes until the test releases them, to interleave loads deterministically.
+private actor ProbeGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
 }

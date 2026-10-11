@@ -93,8 +93,8 @@ pixels get interpreted as Rec.709 and the picture goes flat and grey.
 Recodec reads the video stream's transfer function when a file is loaded. If it
 is PQ or HLG the **HDR → Tone map to SDR** toggle switches itself on, and the
 conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
-on VideoToolbox before encoding: decoded in hardware where the codec allows,
-then uploaded to the GPU for the mapping step. The output is tagged Rec.709
+on VideoToolbox before encoding: ffmpeg decodes the frames, then uploads them to
+the GPU for the mapping step. The output is tagged Rec.709
 throughout and the HDR mastering / content light level metadata is stripped,
 so players do not re-flag it as HDR.
 
@@ -106,8 +106,12 @@ Notes:
   survives adding more files to the batch.
 - Only HDR files are tone mapped. SDR files in the same batch are converted
   exactly as they would be with the toggle off.
-- The mapping runs in 10-bit 4:2:0, so a 4:2:2 HDR source (ProRes) is chroma
-  subsampled on the way through, even when the output codec is 4:2:2 again.
+- The mapping runs in 10-bit 4:2:0: a 4:2:2 or 4:4:4 HDR source (ProRes) is chroma
+  subsampled on the way through, even when the output codec is 4:2:2 again, and
+  an alpha channel is dropped.
+- It needs an ffmpeg that includes the `scale_vt` filter (the Homebrew build
+  does; check with `ffmpeg -filters | grep scale_vt`). Without it HDR conversions
+  fail with a generic error until the toggle is switched off.
 - If you mostly record for sharing, turn HDR off at the source instead:
   Screenshots app → Options → HDR, or iPhone Settings → Camera → Record Video →
   HDR Video.

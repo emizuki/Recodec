@@ -5,12 +5,18 @@ public enum ArgumentBuilder {
         max(1, min(100, 100 - crf * 2))
     }
 
-    /// VideoToolbox HDR→SDR filter graph. The leading `format=p010le` makes every
-    /// source — 8-bit, 10-bit, 4:2:2, hardware- or software-decoded — enter the
+    /// VideoToolbox HDR→SDR filter graph, run on software frames that `hwupload`
+    /// moves onto the device.
+    ///
+    /// `scale=out_range=tv` first: `hwupload` creates video-range buffers, so a
+    /// full-range source would otherwise be read as limited range and come out
+    /// with lifted blacks, capped whites and a `pc` tag on limited-range pixels.
+    /// `format=p010le` then makes every source — 8-bit, 10-bit, 4:2:2 — enter the
     /// device as the one format `scale_vt` hands back as `p010le`: `hwdownload`
     /// can only return the frame context's own format, so without it 8-bit
     /// sources fail with "Invalid output format p010le for hwframe download".
     static let toneMapFilter = [
+        "scale=out_range=tv",
         "format=p010le",
         "hwupload",
         "scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709",
@@ -33,12 +39,12 @@ public enum ArgumentBuilder {
         // Only HDR sources are tone mapped: the graph is built for them and the
         // toggle is shared by the whole batch, so SDR files must pass untouched.
         let toneMap = s.effectiveToneMapHDR && source.isHDR
-        // `scale_vt` runs on a VideoToolbox device declared by `-init_hw_device`;
-        // `-hwaccel` keeps decoding in hardware and hands software frames to the
-        // graph, whose `hwupload` moves them onto that device.
+        // `scale_vt` runs on a VideoToolbox device declared by `-init_hw_device`.
+        // No `-hwaccel`: it made no measurable difference to speed, and it forces
+        // ffmpeg's hardware-only AV1 decoder, which fails outright on Macs without
+        // AV1 decode hardware instead of falling back to a software decoder.
         let hwInput: [String] = toneMap
-            ? ["-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt",
-               "-hwaccel", "videotoolbox"]
+            ? ["-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt"]
             : []
         let inputArgs = ["-hide_banner", "-y"] + hwInput + ["-i", input]
 

@@ -51,7 +51,6 @@ public final class ConversionViewModel: ObservableObject {
 
     public func loadFiles(_ urls: [URL]) async {
         let wasEmpty = items.isEmpty
-        let hadHDRSource = hasHDRSource
         for url in urls where !items.contains(where: { $0.url == url }) {
             items.append(InputItem(url: url))
             let index = items.count - 1
@@ -60,6 +59,13 @@ public final class ConversionViewModel: ObservableObject {
             do {
                 let info = try await probe(url)
                 guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
+                // HDR sources look washed out on SDR displays unless tone mapped, so switch
+                // it on when the list goes from having no HDR source to having one. Decided
+                // here, as each result lands, not from a snapshot taken before the awaits:
+                // the list can change meanwhile (overlapping loads, Remove, Clear All), and
+                // a user who turned it off with an HDR file loaded must not see it flip
+                // back on. Never switched off automatically.
+                if info.isHDR && !hasHDRSource { settings.toneMapHDR = true }
                 items[index].info = info
                 items[index].status = .ready
             } catch {
@@ -70,13 +76,9 @@ public final class ConversionViewModel: ObservableObject {
         // On a fresh load (list was empty), default the audio codec from the first source.
         if wasEmpty, let first = items.compactMap({ $0.info }).first {
             settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
-        }
-        // HDR sources look washed out on SDR displays unless tone mapped, so switch
-        // it on when the list goes from having no HDR source to having one. Not on
-        // every load: a user who turned it off with an HDR file loaded must not see
-        // it flip back on when more files arrive. Never switched off automatically.
-        if !hadHDRSource && hasHDRSource {
-            settings.toneMapHDR = true
+            // Copy/None accept only `.source` channels; a stale Stereo/5.1 pick would
+            // otherwise fail the combo check for every file in the batch.
+            audioCodecChanged()
         }
     }
 

@@ -327,35 +327,26 @@ final class ArgumentBuilderTests: XCTestCase {
         ]])
     }
 
-    func testToneMapHardwareEncode() {
+    func testToneMapDeclaresDeviceBeforeInputAndDoesNotForceHwaccel() {
         var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
                                    useHardware: true)
         s.toneMapHDR = true
-        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)
-        XCTAssertEqual(args, [[
-            "-hide_banner", "-y",
-            "-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt",
-            "-hwaccel", "videotoolbox",
-            "-i", "/in.mov",
-            "-c:v", "hevc_videotoolbox", "-q:v", "50", "-pix_fmt", "yuv420p",
-            "-vf", "format=p010le,hwupload,"
-                + "scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709,"
-                + "hwdownload,format=p010le,"
-                + "sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA,"
-                + "sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL",
-            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
-            "-tag:v", "hvc1",
-            "-c:a", "aac",
-            "-movflags", "+faststart", "/out.mp4"
-        ]])
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
+        let input = args.firstIndex(of: "-i")!
+        // Input options placed after `-i` would silently apply to the output instead.
+        XCTAssertLessThan(args.firstIndex(of: "-init_hw_device")!, input)
+        XCTAssertLessThan(args.firstIndex(of: "-filter_hw_device")!, input)
+        // `-hwaccel` makes ffmpeg pick its hardware-only AV1 decoder, which fails outright
+        // on Macs without AV1 decode hardware instead of falling back to libdav1d.
+        XCTAssertFalse(args.contains("-hwaccel"))
     }
 
     func testToneMapSoftwareEncodeKeepsPixFmtAndProfile() {
         var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
         s.toneMapHDR = true
         let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
-        XCTAssertTrue(args.contains("-hwaccel"), "software encoders still decode via VideoToolbox")
-        XCTAssertEqual(args.firstIndex(of: "-vf").map { args[$0 + 1].hasPrefix("format=p010le,hwupload,scale_vt=") }, true)
+        XCTAssertTrue(args.contains("-init_hw_device"))
+        XCTAssertTrue(args.contains("-vf"))
         // The existing 8-bit + High-profile handling must survive the filter insertion.
         XCTAssertTrue(args.contains("yuv420p"))
         XCTAssertTrue(args.contains("high"))
@@ -371,7 +362,7 @@ final class ArgumentBuilderTests: XCTestCase {
                                          source: hdrSrc, passLog: "/tmp/log")
         XCTAssertEqual(cmds.count, 2)
         for pass in cmds {
-            XCTAssertTrue(pass.contains("-hwaccel"))
+            XCTAssertTrue(pass.contains("-init_hw_device"))
             XCTAssertTrue(pass.contains("-vf"))
         }
     }
@@ -397,7 +388,7 @@ final class ArgumentBuilderTests: XCTestCase {
             var s = ConversionSettings(container: .mkv, videoCodec: codec, audioCodec: .aac, crf: 20)
             s.toneMapHDR = true
             let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: hdrSrc)[0]
-            XCTAssertFalse(args.contains("-hwaccel"), "\(codec) has no encoder to tone map into")
+            XCTAssertFalse(args.contains("-init_hw_device"), "\(codec) has no encoder to tone map into")
             XCTAssertFalse(args.contains("-vf"))
             XCTAssertFalse(args.contains("-color_trc"))
         }
