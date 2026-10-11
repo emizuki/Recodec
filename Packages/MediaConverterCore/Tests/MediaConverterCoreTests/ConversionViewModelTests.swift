@@ -126,15 +126,45 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.items.first?.status, .ready)
     }
 
-    func testCompatibilityUsesFirstItem() async {
+    /// With Copy the verdict depends on the file, so a batch can mix ready and not-ready files.
+    /// Judging the whole batch by its first file hid the second file's problem.
+    func testCompatibilityIsJudgedPerFile() async {
         let vm = ConversionViewModel(
             engine: FakeEngine(),
-            probe: { _ in MediaInfo(videoCodecName: "h264", audioCodecName: "aac") },
+            probe: { url in
+                url.lastPathComponent == "ok.mp4"
+                    ? MediaInfo(videoCodecName: "h264", audioCodecName: "aac")
+                    : MediaInfo(videoCodecName: "vp9", audioCodecName: "opus")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .copy, audioCodec: .copy, crf: 25)
+        await vm.loadFiles([URL(fileURLWithPath: "/ok.mp4"), URL(fileURLWithPath: "/bad.webm")])
+
+        XCTAssertEqual(vm.compatibility(for: vm.items[0])?.isCompatible, true)
+        XCTAssertEqual(vm.compatibility(for: vm.items[1])?.isCompatible, false)
+        XCTAssertEqual(vm.compatibility(for: vm.items[1])?.reason,
+                       "The source video (vp9) isn't H.264 or HEVC")
+        XCTAssertEqual(vm.compatibilityTally, CompatibilityTally(ready: 1, total: 2))
+    }
+
+    /// A file that couldn't be read has no codecs to judge. Judging it against an empty
+    /// MediaInfo would count it as not iPhone-ready and blame the settings for it.
+    func testUnreadFileHasNoVerdictAndIsNotCounted() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                if url.lastPathComponent == "broken.mov" { throw CocoaError(.fileReadCorruptFile) }
+                return MediaInfo(videoCodecName: "h264", audioCodecName: "aac")
+            },
             toolsAvailable: true,
             fileExists: { _ in false })
         vm.settings = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 28)
-        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
-        XCTAssertTrue(vm.compatibility.isCompatible)
+        await vm.loadFiles([URL(fileURLWithPath: "/broken.mov"), URL(fileURLWithPath: "/fine.mov")])
+
+        XCTAssertNil(vm.compatibility(for: vm.items[0]))
+        XCTAssertEqual(vm.compatibility(for: vm.items[1])?.isCompatible, true)
+        XCTAssertEqual(vm.compatibilityTally, CompatibilityTally(ready: 1, total: 1))
     }
 
     // MARK: - Codec compatibility pre-flight

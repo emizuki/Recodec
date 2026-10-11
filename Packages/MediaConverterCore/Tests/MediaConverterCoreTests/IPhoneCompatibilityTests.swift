@@ -34,4 +34,21 @@ final class IPhoneCompatibilityTests: XCTestCase {
         XCTAssertFalse(r.isCompatible)
         XCTAssertEqual(r.reason, "The source video (vp9) isn't H.264 or HEVC")
     }
+
+    /// Copy of a stream the source doesn't have copies nothing, so a silent screen recording
+    /// or an audio-only file is not "not iPhone-ready" for lacking something to copy.
+    func testCopyOfAMissingStreamIsNotAProblem() {
+        let silent = MediaInfo(videoCodecName: "h264")
+        XCTAssertTrue(IPhoneCompatibilityChecker.evaluate(make(.mp4, .copy, .copy), source: silent).isCompatible)
+        let audioOnly = MediaInfo(audioCodecName: "aac")
+        XCTAssertTrue(IPhoneCompatibilityChecker.evaluate(make(.mp4, .copy, .copy), source: audioOnly).isCompatible)
+    }
+
+    /// The flip side: a stream that is there and can't play still fails when copied.
+    func testCopyOfAPresentIncompatibleAudioStreamStillFails() {
+        let opusSource = MediaInfo(videoCodecName: "h264", audioCodecName: "opus")
+        let r = IPhoneCompatibilityChecker.evaluate(make(.mp4, .copy, .copy), source: opusSource)
+        XCTAssertFalse(r.isCompatible)
+        XCTAssertEqual(r.reason, "The source audio (opus) isn't AAC, MP3, or ALAC")
+    }
 }

@@ -45,8 +45,18 @@ public final class ConversionViewModel: ObservableObject {
         self.fileExists = fileExists
     }
 
-    public var compatibility: IPhoneCompatibility {
-        IPhoneCompatibilityChecker.evaluate(settings, source: items.first?.info ?? MediaInfo())
+    /// Whether `item` ends up iPhone-ready under the current settings. With Copy the answer
+    /// depends on the file, so it is judged per file. `nil` until the file has been read:
+    /// judging it against an empty `MediaInfo` would blame the settings for a missing probe.
+    public func compatibility(for item: InputItem) -> IPhoneCompatibility? {
+        guard let info = item.info else { return nil }
+        return IPhoneCompatibilityChecker.evaluate(settings, source: info)
+    }
+
+    /// iPhone-ready files out of the files read so far.
+    public var compatibilityTally: CompatibilityTally {
+        let verdicts = items.compactMap { compatibility(for: $0) }
+        return CompatibilityTally(ready: verdicts.filter(\.isCompatible).count, total: verdicts.count)
     }
 
     public func loadFiles(_ urls: [URL]) async {

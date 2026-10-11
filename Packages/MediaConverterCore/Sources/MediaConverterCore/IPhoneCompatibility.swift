@@ -9,6 +9,17 @@ public struct IPhoneCompatibility: Sendable, Equatable {
     }
 }
 
+/// How many of the files read so far end up iPhone-ready under the current settings.
+public struct CompatibilityTally: Equatable {
+    public let ready: Int
+    public let total: Int
+
+    public init(ready: Int, total: Int) {
+        self.ready = ready
+        self.total = total
+    }
+}
+
 public enum IPhoneCompatibilityChecker {
     private static let videoCodecs: Set<String> = ["h264", "hevc"]
     private static let audioCodecs: Set<String> = ["aac", "mp3", "alac"]
@@ -19,13 +30,16 @@ public enum IPhoneCompatibilityChecker {
             return .init(isCompatible: false,
                          reason: "\(s.container.fileExtension.uppercased()) files don't play on iPhone")
         }
-        if !s.container.isAudioOnly && s.videoCodec != .none {
+        // Copy of a stream the source lacks copies nothing (a silent recording, an audio-only
+        // file), so only a stream that is there can make the output unplayable.
+        if !s.container.isAudioOnly && s.videoCodec != .none
+            && !(s.videoCodec == .copy && source.videoCodecName == nil) {
             let name = (s.videoCodec == .copy) ? source.videoCodecName : s.videoCodec.canonicalName
             if !(name.map(videoCodecs.contains) ?? false) {
                 return .init(isCompatible: false, reason: videoReason(s.videoCodec, source: source))
             }
         }
-        if s.audioCodec != .none {
+        if s.audioCodec != .none && !(s.audioCodec == .copy && source.audioCodecName == nil) {
             let name = (s.audioCodec == .copy) ? source.audioCodecName : s.audioCodec.canonicalName
             if !(name.map(audioCodecs.contains) ?? false) {
                 return .init(isCompatible: false, reason: audioReason(s.audioCodec, source: source))
