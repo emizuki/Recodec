@@ -24,7 +24,7 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **Video:** H.264, HEVC, AV1, VP9, ProRes — or **Copy** (passthrough, no re-encode).
 - **Audio:** AAC, MP3, ALAC, Opus, FLAC, PCM, AC-3, E-AC-3 — or Copy.
 - **Controls:** per-codec quality (CRF), encoder preset, channels (up to 7.1 where the encoder supports it), audio bitrate (up to 1536 kbps), and optional VideoToolbox hardware encoding.
-- **Keep all tracks** (opt-in, under **More options**) — carry every audio and subtitle stream through (and attachments, into MKV) instead of one of each, transcoding only the first audio track.
+- **Keep all audio and subtitle tracks** (opt-in, under **More options**) — carry every audio and subtitle stream through (and attachments, into MKV) instead of one of each, transcoding only the first audio track.
 - **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them, marks them with an **HDR → SDR** chip in the file list, and tone maps to Rec.709 on VideoToolbox.
 - **Live iPhone-ready verdict, per file** — each row says whether that file comes out iPhone-ready under your current settings (and why not), and the footer counts them ("2 of 4 iPhone-ready"). With **Copy** the answer depends on the source, so a batch can mix both.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
@@ -37,7 +37,7 @@ single-track source that is exactly right, and it stays the default so existing
 conversions produce byte-identical output.
 
 A disc remux is usually not a single-track source. Open **More options** and turn on
-**Keep all tracks** and Recodec maps every video, audio and subtitle stream from the input
+**Keep all audio and subtitle tracks** and Recodec maps every video, audio and subtitle stream from the input
 instead (plus attachments such as fonts, into MKV), copying subtitles through
 untouched (they are re-muxed, never re-encoded). Chapters are carried through
 either way, wherever the container can hold them.
@@ -60,7 +60,7 @@ Two things to know:
   by MP4, MOV and M4V, and VobSub by MOV and M4V (MP4 takes it). A mismatch
   aborts the run — use MKV for disc remuxes.
 - **Default subtitle** sets which subtitle track a player selects on its own. It
-  needs *Keep all tracks*, because without mapping there is at most one subtitle
+  needs *Keep all audio and subtitle tracks*, because without mapping there is at most one subtitle
   track to flag. Picking a language clears the *default* flag on every subtitle
   stream first (other flags such as *forced* are kept in MKV and MP4; MOV and M4V
   drop them when the subtitles are copied), then sets it on the first track
@@ -104,7 +104,7 @@ the video is passed through untouched and the audio is re-encoded without loss
 (ffmpeg's TrueHD decoder is bit-exact, and FLAC stores an MD5 of its source PCM
 so you can verify the result).
 
-With *Keep all tracks* on, only the **first** audio track is transcoded; the rest
+With *Keep all audio and subtitle tracks* on, only the **first** audio track is transcoded; the rest
 are copied. A disc remux that ships a lossless primary track plus an AC-3
 compatibility track keeps that second track byte-for-byte instead of re-encoding
 it lossy-to-lossy at the primary track's bitrate.

@@ -199,8 +199,8 @@ struct SettingsPanel: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    /// Stream mapping. Collapsed, it still says when "Keep all tracks" is on, so a changed
-    /// setting is never hidden.
+    /// Stream mapping. Collapsed, it still says when "Keep all audio and subtitle tracks" is
+    /// on, so a changed setting is never hidden.
     private var moreOptions: some View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
             Button {
@@ -223,7 +223,7 @@ struct SettingsPanel: View {
             .accessibilityValue(showMore ? "expanded" : "collapsed")
 
             if showMore {
-                Toggle("Keep all tracks", isOn: $viewModel.settings.preserveAllStreams)
+                Toggle("Keep all audio and subtitle tracks", isOn: $viewModel.settings.preserveAllStreams)
                     .help("Map every audio and subtitle stream from the source (and "
                           + "attachments, into MKV) instead of only the first of each kind. "
                           + "The target container must be able to hold them.")
