@@ -223,8 +223,9 @@ struct ContentView: View {
                                   || viewModel.settings.videoCodec == .none)
                         .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
                               + "VideoToolbox, so it no longer looks washed out on SDR "
-                              + "displays. Requires re-encoding the video. "
-                              + "Switched on automatically when an HDR file is loaded.")
+                              + "displays. Requires re-encoding the video. Only HDR files are "
+                              + "affected; SDR files in the batch convert as usual. Switched on "
+                              + "automatically when the first HDR file is loaded.")
                     if viewModel.hasHDRSource {
                         Text("HDR source").font(.caption).foregroundStyle(.secondary)
                     }

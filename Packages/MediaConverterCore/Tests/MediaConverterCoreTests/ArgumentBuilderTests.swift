@@ -335,10 +335,11 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertEqual(args, [[
             "-hide_banner", "-y",
             "-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt",
-            "-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld",
+            "-hwaccel", "videotoolbox",
             "-i", "/in.mov",
             "-c:v", "hevc_videotoolbox", "-q:v", "50", "-pix_fmt", "yuv420p",
-            "-vf", "hwupload,scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709,"
+            "-vf", "format=p010le,hwupload,"
+                + "scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709,"
                 + "hwdownload,format=p010le,"
                 + "sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA,"
                 + "sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL",
@@ -354,7 +355,7 @@ final class ArgumentBuilderTests: XCTestCase {
         s.toneMapHDR = true
         let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
         XCTAssertTrue(args.contains("-hwaccel"), "software encoders still decode via VideoToolbox")
-        XCTAssertEqual(args.firstIndex(of: "-vf").map { args[$0 + 1].hasPrefix("hwupload,scale_vt=") }, true)
+        XCTAssertEqual(args.firstIndex(of: "-vf").map { args[$0 + 1].hasPrefix("format=p010le,hwupload,scale_vt=") }, true)
         // The existing 8-bit + High-profile handling must survive the filter insertion.
         XCTAssertTrue(args.contains("yuv420p"))
         XCTAssertTrue(args.contains("high"))
@@ -372,6 +373,22 @@ final class ArgumentBuilderTests: XCTestCase {
         for pass in cmds {
             XCTAssertTrue(pass.contains("-hwaccel"))
             XCTAssertTrue(pass.contains("-vf"))
+        }
+    }
+
+    func testToneMapSkippedForSDRSource() {
+        // The toggle covers the whole batch: an SDR file must get exactly the command
+        // it gets with the toggle off, not the HDR graph.
+        let sdr = MediaInfo(durationSeconds: 10, videoCodecName: "h264", audioCodecName: "aac",
+                            colorTransfer: "bt709")
+        let off = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
+                                     useHardware: true)
+        var on = off
+        on.toneMapHDR = true
+        for source in [sdr, MediaInfo(durationSeconds: 10, videoCodecName: "h264", audioCodecName: "aac")] {
+            XCTAssertEqual(
+                ArgumentBuilder.build(settings: on, input: "/in.mov", output: "/out.mp4", source: source),
+                ArgumentBuilder.build(settings: off, input: "/in.mov", output: "/out.mp4", source: source))
         }
     }
 

@@ -357,4 +357,28 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
         XCTAssertTrue(vm.settings.toneMapHDR, "not only on first load — HDR can arrive later in the batch")
     }
+
+    func testManualOffSurvivesAddingMoreFiles() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                          colorTransfer: url.lastPathComponent.hasPrefix("hdr") ? "smpte2084" : "bt709")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr1.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+
+        vm.settings.toneMapHDR = false
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR, "adding an SDR file must not undo a manual off")
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr2.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR, "nor must adding a second HDR file")
+
+        // A fresh list is a fresh decision: the first HDR source switches it on again.
+        vm.clearAll()
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr3.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+    }
 }

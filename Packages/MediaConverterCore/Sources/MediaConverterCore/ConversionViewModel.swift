@@ -51,6 +51,7 @@ public final class ConversionViewModel: ObservableObject {
 
     public func loadFiles(_ urls: [URL]) async {
         let wasEmpty = items.isEmpty
+        let hadHDRSource = hasHDRSource
         for url in urls where !items.contains(where: { $0.url == url }) {
             items.append(InputItem(url: url))
             let index = items.count - 1
@@ -68,9 +69,10 @@ public final class ConversionViewModel: ObservableObject {
             settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
         }
         // HDR sources look washed out on SDR displays unless tone mapped, so switch
-        // it on the moment one turns up. Never switch it off automatically: the
-        // user may have enabled it deliberately, and it is a no-op for SDR input.
-        if items.contains(where: { $0.info?.isHDR == true }) {
+        // it on when the list goes from having no HDR source to having one. Not on
+        // every load: a user who turned it off with an HDR file loaded must not see
+        // it flip back on when more files arrive. Never switched off automatically.
+        if !hadHDRSource && hasHDRSource {
             settings.toneMapHDR = true
         }
     }

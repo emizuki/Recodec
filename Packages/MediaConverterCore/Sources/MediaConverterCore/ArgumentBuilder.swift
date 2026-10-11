@@ -5,10 +5,13 @@ public enum ArgumentBuilder {
         max(1, min(100, 100 - crf * 2))
     }
 
-    /// VideoToolbox HDR→SDR filter graph. `hwupload` is a no-op for frames the
-    /// hardware decoder already produced and lifts software-decoded ones (VP9,
-    /// AV1 …) onto the device, so one graph serves every source codec.
+    /// VideoToolbox HDR→SDR filter graph. The leading `format=p010le` makes every
+    /// source — 8-bit, 10-bit, 4:2:2, hardware- or software-decoded — enter the
+    /// device as the one format `scale_vt` hands back as `p010le`: `hwdownload`
+    /// can only return the frame context's own format, so without it 8-bit
+    /// sources fail with "Invalid output format p010le for hwframe download".
     static let toneMapFilter = [
+        "format=p010le",
         "hwupload",
         "scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709",
         "hwdownload",
@@ -27,13 +30,15 @@ public enum ArgumentBuilder {
         }
 
         let mp4Family: Set<Container> = [.mp4, .mov, .m4v]
-        let toneMap = s.effectiveToneMapHDR
-        // HDR→SDR runs on VideoToolbox: decode in hardware where the codec allows
-        // (`-hwaccel`), otherwise `hwupload` lifts software-decoded frames onto the
-        // device declared by `-init_hw_device`. Both forms need the same input flags.
+        // Only HDR sources are tone mapped: the graph is built for them and the
+        // toggle is shared by the whole batch, so SDR files must pass untouched.
+        let toneMap = s.effectiveToneMapHDR && source.isHDR
+        // `scale_vt` runs on a VideoToolbox device declared by `-init_hw_device`;
+        // `-hwaccel` keeps decoding in hardware and hands software frames to the
+        // graph, whose `hwupload` moves them onto that device.
         let hwInput: [String] = toneMap
             ? ["-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt",
-               "-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"]
+               "-hwaccel", "videotoolbox"]
             : []
         let inputArgs = ["-hide_banner", "-y"] + hwInput + ["-i", input]
 
