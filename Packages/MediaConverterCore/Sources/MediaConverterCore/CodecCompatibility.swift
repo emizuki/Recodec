@@ -42,6 +42,7 @@ public enum CodecCompatibility {
         return videoCodecs(for: settings.container).contains(settings.videoCodec)
             && audioCodecs(for: settings.container).contains(settings.audioCodec)
             && channelOptions(for: settings.audioCodec).contains(settings.channels)
+            && isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec)
     }
 
     /// Channel layouts each audio encoder actually accepts. ffmpeg aborts the run
@@ -68,5 +69,34 @@ public enum CodecCompatibility {
             // No encoder runs, so `-ac` is never emitted; keep the picker inert.
             return [.source]
         }
+    }
+
+    /// Highest audio bitrate (kbps) each lossy encoder accepts or honours, measured against
+    /// ffmpeg 9.0.2. A preset above it is rejected or silently clamped, so it must not be offered:
+    ///   - opus: libopus allows 256 kbps per channel; stereo fails above 512 (mono above 256).
+    ///   - mp3: capped at 320 kbps; anything higher is clamped.
+    ///   - ac3: capped at 640 kbps; anything higher is clamped.
+    ///   - aac: left at the old 640 (ffmpeg's encoder clamps lower for stereo, silently).
+    ///   - eac3: honours up to 1536 kbps, which is why the list goes that high.
+    /// nil for codecs that take no bitrate.
+    public static func maxAudioKbps(for codec: AudioCodec) -> Int? {
+        switch codec {
+        case .mp3:  return 320
+        case .ac3:  return 640
+        case .opus: return 512
+        case .aac:  return 640
+        case .eac3: return 1536
+        default:    return nil
+        }
+    }
+
+    public static func audioBitrateOptions(for codec: AudioCodec) -> [AudioBitrate] {
+        guard let max = maxAudioKbps(for: codec) else { return AudioBitrate.presets }
+        return AudioBitrate.presets.filter { if case .kbps(let k) = $0 { return k <= max }; return true }
+    }
+
+    public static func isAudioBitrateValid(_ bitrate: AudioBitrate, for codec: AudioCodec) -> Bool {
+        guard let max = maxAudioKbps(for: codec), case .kbps(let k) = bitrate else { return true }
+        return k <= max
     }
 }

@@ -354,6 +354,10 @@ final class ConversionEngineTests: XCTestCase {
         case audioFirstMP4
         /// h264, aac + ac3, two srt subtitles, one attachment.
         case multiMKV
+        /// `multiMKV` with the German subtitle tagged `deu` (terminology form) instead of `ger`.
+        case multiMKVTCodes
+        /// Two real video streams (testsrc2 and smptebars) and one aac track.
+        case twoVideoMKV
         /// A plain AAC file: no video stream at all.
         case audioOnlyM4A
         /// AAC plus an mjpeg cover picture and no real video.
@@ -408,7 +412,7 @@ final class ConversionEngineTests: XCTestCase {
                                                                "-y", out.path])
         case .audioOnlyM4A:
             out = tmp("audio.m4a")
-            _ = try run(tools.ffmpeg, base + audio + ["-c:a", "aac", "-y", out.path])
+            _ = try run(tools.ffmpeg, base + audio + ["-ac", "2", "-c:a", "aac", "-y", out.path])
         case .audioWithCoverM4A:
             let cover = try makeCover()
             out = tmp("audiocover.m4a")
@@ -426,20 +430,30 @@ final class ConversionEngineTests: XCTestCase {
             out = tmp("audiofirst.mp4")
             _ = try run(tools.ffmpeg, base + audio + video + ["-map", "0:a", "-map", "1:v", "-c:a", "aac"] + x264
                                                               + ["-y", out.path])
-        case .multiMKV:
+        case .multiMKV, .multiMKVTCodes:
+            // German is tagged `ger` (the form MKV tools write) or `deu` (the one MP4 uses).
+            var germanTag = "ger"
+            if case .multiMKVTCodes = layout { germanTag = "deu" }
             let ger = tmp("ger.srt"), eng = tmp("eng.srt"), font = tmp("font.ttf"); scratch += [ger, eng, font]
             try "1\n00:00:00,000 --> 00:00:01,000\nHallo\n".write(to: ger, atomically: true, encoding: .utf8)
             try "1\n00:00:00,000 --> 00:00:01,000\nHello\n".write(to: eng, atomically: true, encoding: .utf8)
             try "not really a font".write(to: font, atomically: true, encoding: .utf8)
             out = tmp("multi.mkv")
+            // The German track is a forced one (foreign-dialogue subtitles); English is the default.
             _ = try run(tools.ffmpeg, base + video + audio + ["-f", "lavfi", "-i", "sine=frequency=880:duration=2",
                                                                "-i", ger.path, "-i", eng.path,
                                                                "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3", "-map", "4"]
                                       + x264 + ["-c:a:0", "aac", "-c:a:1", "ac3", "-c:s", "srt",
-                                                "-metadata:s:s:0", "language=ger", "-metadata:s:s:1", "language=eng",
+                                                "-metadata:s:s:0", "language=\(germanTag)", "-metadata:s:s:1", "language=eng",
+                                                "-disposition:s:0", "forced", "-disposition:s:1", "default",
                                                 "-attach", font.path,
                                                 "-metadata:s:t", "mimetype=application/x-truetype-font",
                                                 "-metadata:s:t", "filename=font.ttf", "-y", out.path])
+        case .twoVideoMKV:
+            out = tmp("twovideo.mkv")
+            _ = try run(tools.ffmpeg, base + video + ["-f", "lavfi", "-i", "smptebars=size=160x120:rate=15:duration=2"]
+                                      + audio + ["-map", "0:v", "-map", "1:v", "-map", "2:a"] + x264
+                                      + ["-c:a", "aac", "-y", out.path])
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "could not generate the \(layout) fixture")
         return out
@@ -455,13 +469,15 @@ final class ConversionEngineTests: XCTestCase {
     }
 
     private func keepAll(_ tools: FFmpegTools, input: URL, to container: Container, video: VideoCodec,
-                         audio: AudioCodec, bitrate: Bool = false) async throws -> URL {
+                         audio: AudioCodec, bitrate: Bool = false,
+                         subtitleDefault: SubtitleDefault = .unchanged) async throws -> URL {
         let output = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ka-out-\(UUID().uuidString).\(container.fileExtension)")
         let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
         var settings = ConversionSettings(container: container, videoCodec: video, audioCodec: audio, crf: 32)
         settings.preset = .ultrafast
         settings.preserveAllStreams = true
+        settings.subtitleDefault = subtitleDefault
         if bitrate { settings.rateControl = .bitrate; settings.videoBitrateKbps = 300 }
         try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
             .convert(input: input, output: output, settings: settings, source: source) { _ in }
@@ -580,6 +596,97 @@ final class ConversionEngineTests: XCTestCase {
         let result = try layoutOf(tools, output)
         XCTAssertEqual(result.pictures, 1)
         XCTAssertEqual(try videoStream(tools, output)["codec_tag_string"] as? String, "hvc1")
+    }
+
+    // MARK: - Default subtitle, 2-pass with several videos, audio bitrates (real ffmpeg)
+
+    /// Language and default/forced flags of every subtitle stream, in order.
+    private func subtitleFlags(_ tools: FFmpegTools, _ url: URL) throws -> [String] {
+        let json = try run(tools.ffprobe, ["-v", "error", "-select_streams", "s", "-show_streams",
+                                           "-of", "json", url.path])
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        return (root["streams"] as? [[String: Any]] ?? []).map { stream in
+            let disposition = stream["disposition"] as? [String: Any]
+            let language = (stream["tags"] as? [String: Any])?["language"] as? String ?? "?"
+            return "\(language) default=\(disposition?["default"] as? Int ?? 0) forced=\(disposition?["forced"] as? Int ?? 0)"
+        }
+    }
+
+    /// `-disposition:s 0` cleared every flag, so a forced track (foreign-dialogue subtitles) stopped
+    /// showing on its own the moment a default language was chosen. Only `default` may change.
+    func testDefaultSubtitleChangesOnlyTheDefaultFlag() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .multiMKV)
+        defer { discard(input) }
+        XCTAssertEqual(try subtitleFlags(tools, input), ["ger default=0 forced=1", "eng default=1 forced=0"], "fixture")
+
+        let german = try await keepAll(tools, input: input, to: .mkv, video: .h264, audio: .aac,
+                                       subtitleDefault: .language("ger"))
+        defer { discard(german) }
+        XCTAssertEqual(try subtitleFlags(tools, german), ["ger default=1 forced=1", "eng default=0 forced=0"])
+
+        let none = try await keepAll(tools, input: input, to: .mkv, video: .h264, audio: .aac,
+                                     subtitleDefault: .none)
+        defer { discard(none) }
+        XCTAssertEqual(try subtitleFlags(tools, none), ["ger default=0 forced=1", "eng default=0 forced=0"])
+    }
+
+    /// The picker offers `ger`; a track tagged `deu` (the terminology form of the same language)
+    /// matched nothing, so choosing German silently cleared every default instead.
+    func testDefaultSubtitleFindsATerminologyTaggedTrack() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .multiMKVTCodes)
+        defer { discard(input) }
+        XCTAssertEqual(try subtitleFlags(tools, input).first, "deu default=0 forced=1",
+                       "fixture must really carry the terminology tag")
+
+        let output = try await keepAll(tools, input: input, to: .mkv, video: .h264, audio: .aac,
+                                       subtitleDefault: .language("ger"))
+        defer { discard(output) }
+        XCTAssertEqual(try subtitleFlags(tools, output), ["deu default=1 forced=1", "eng default=0 forced=0"])
+    }
+
+    /// Each encoder opens its 2-pass stats file by output stream index; pass 1 mapped one video
+    /// while pass 2 mapped both, so the second had no log.
+    func testKeepAllTracksTwoPassWithSeveralVideoStreams() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .twoVideoMKV)
+        defer { discard(input) }
+
+        let output = try await keepAll(tools, input: input, to: .mkv, video: .h264, audio: .aac, bitrate: true)
+        defer { discard(output) }
+        XCTAssertEqual(try layoutOf(tools, output).kinds, ["video", "video", "audio"])
+    }
+
+    /// Every bitrate the picker offers must convert. libopus rejects stereo above 512 kbps (the old
+    /// 640 preset and the new 768+ ones failed outright) and mp3/ac3 clamp theirs without saying so.
+    func testEveryOfferedAudioBitrateConverts() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
+        let input = try makeLayout(tools, .audioOnlyM4A)   // stereo AAC
+        defer { discard(input) }
+        let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+
+        let cases: [(codec: AudioCodec, container: Container, encoder: String)] = [
+            (.aac, .m4a, "aac"), (.mp3, .mp3, "libmp3lame"), (.ac3, .m4a, "ac3"),
+            (.eac3, .mkv, "eac3"), (.opus, .mkv, "libopus"),
+        ]
+        for (codec, container, encoder) in cases where encoders.contains(" \(encoder) ") {
+            for option in CodecCompatibility.audioBitrateOptions(for: codec) {
+                let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("br-\(UUID().uuidString).\(container.fileExtension)")
+                defer { discard(output) }
+                var settings = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 30)
+                settings.audioBitrate = option
+                XCTAssertTrue(CodecCompatibility.isValidCombo(settings), "\(codec) \(option) must be a valid combo")
+                do {
+                    try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+                        .convert(input: input, output: output, settings: settings, source: source) { _ in }
+                } catch {
+                    XCTFail("\(codec) at \(option) is offered but fails: \(error)")
+                }
+            }
+        }
     }
 }
 

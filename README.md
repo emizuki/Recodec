@@ -61,15 +61,16 @@ Two things to know:
   aborts the run — use MKV for disc remuxes.
 - **Default subtitle** sets which subtitle track a player selects on its own. It
   needs *Keep all tracks*, because without mapping there is at most one subtitle
-  track to flag. Picking a language resets the flags on every subtitle stream
-  first (*forced* and the like go with them), then sets *default* on the first
+  track to flag. Picking a language clears the *default* flag on every subtitle
+  stream first (other flags such as *forced* are kept), then sets it on the first
   track matching that language — so a source shipping two "default" tracks does
-  not carry the conflict through.
+  not carry the conflict through. The two ISO 639-2 codes some languages have
+  (`ger`/`deu`, `fre`/`fra`) match each other.
   Leave it on *Unchanged* to preserve whatever the source declared.
 
 ### Lossless and HD audio
 
-The bitrate list goes to 1536 kbps and channels to 7.1, which matters when a
+The bitrate list goes to 1536 kbps (for E-AC-3) and channels to 7.1, which matters when a
 playback target cannot decode the source codec. The Plex tvOS client, for
 example, only Direct Plays `aac`, `ac3`, and `eac3` — hand it TrueHD or FLAC and
 the server transcodes, typically down to 640 kbps E-AC-3. Pre-encoding the track
@@ -81,8 +82,11 @@ aborts on an unsupported layout rather than down-mixing. AC-3 and E-AC-3 stop at
 5.1 (7.1 Dolby Digital Plus needs Dolby's own encoder, which ffmpeg does not
 ship), MP3 is stereo-only, and ALAC is capped at 5.1 here — its 8-channel layout
 is `7.1(wide)`, which routes the side channels to front-wide speakers and would
-mislabel a standard 7.1 mix. AAC, Opus, FLAC and PCM take the full 7.1. Changing
-codec clamps an out-of-range selection down rather than failing at convert time.
+mislabel a standard 7.1 mix. AAC, Opus, FLAC and PCM take the full 7.1. The bitrate
+picker follows the same rule: MP3 stops at 320 kbps and AC-3 at 640 (higher requests
+are silently clamped), Opus at 512 (libopus rejects more for stereo) and only E-AC-3
+goes up to 1536. Changing codec clamps an out-of-range selection down rather than
+failing at convert time.
 
 For genuinely lossless output, pair **Video: Copy** with **Audio: FLAC** in MKV:
 the video is passed through untouched and the audio is re-encoded without loss

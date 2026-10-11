@@ -196,8 +196,9 @@ public enum RateControl: String, CaseIterable, Sendable {
 public enum SubtitleDefault: Sendable, Equatable, Hashable {
     /// Leave every disposition exactly as ffmpeg's stream copy produced it.
     case unchanged
-    /// Clear `default` on all subtitle tracks, then set it on the first track
-    /// whose language tag matches (case-insensitive ISO 639-2, e.g. "eng").
+    /// Clear `default` on all subtitle tracks, then set it on the first track whose
+    /// language tag matches (case-insensitive ISO 639-2, e.g. "eng"; the bibliographic
+    /// and terminology forms of a language match each other, see `canonicalLanguage`).
     case language(String)
     /// Clear `default` on every subtitle track.
     case none
@@ -206,6 +207,20 @@ public enum SubtitleDefault: Sendable, Equatable, Hashable {
         .unchanged, .none, .language("eng"), .language("ger"),
         .language("fre"), .language("spa"), .language("ita"),
     ]
+
+    /// ISO 639-2 gives 20 languages two codes: a bibliographic (B) one and a terminology (T)
+    /// one. MKV usually carries B (`ger`), MP4 and many encoders write T (`deu`), and both
+    /// are valid for the same language. Maps either form to the B code, lowercased.
+    public static func canonicalLanguage(_ code: String) -> String {
+        let t = code.lowercased()
+        let terminologyToBibliographic = [
+            "sqi": "alb", "hye": "arm", "eus": "baq", "mya": "bur", "zho": "chi",
+            "ces": "cze", "nld": "dut", "fra": "fre", "kat": "geo", "deu": "ger",
+            "ell": "gre", "isl": "ice", "mkd": "mac", "mri": "mao", "msa": "may",
+            "fas": "per", "ron": "rum", "slk": "slo", "bod": "tib", "cym": "wel",
+        ]
+        return terminologyToBibliographic[t] ?? t
+    }
 }
 
 public struct ConversionSettings: Sendable, Equatable {

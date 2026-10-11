@@ -521,6 +521,46 @@ final class ConversionViewModelTests: XCTestCase {
             XCTFail("expected the file to convert, got \(vm.items[0].status)")
         }
     }
+
+    func testAudioCodecChangeClampsABitrateTheNewCodecRejects() {
+        let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
+                                     toolsAvailable: true, fileExists: { _ in false })
+        // A high E-AC-3 pick must not carry over: Opus rejects it, MP3 and AC-3 clamp it silently.
+        for (codec, expected) in [(AudioCodec.opus, 512), (.mp3, 320), (.ac3, 640), (.aac, 640)] {
+            vm.settings.audioCodec = .eac3
+            vm.settings.audioBitrate = .kbps(1536)
+            vm.settings.audioCodec = codec
+            vm.audioCodecChanged()
+            XCTAssertEqual(vm.settings.audioBitrate, .kbps(expected), "\(codec)")
+            XCTAssertTrue(CodecCompatibility.audioBitrateOptions(for: codec).contains(vm.settings.audioBitrate))
+        }
+        // Auto and a pick the new codec accepts are left alone.
+        vm.settings.audioBitrate = .auto
+        vm.settings.audioCodec = .opus
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .auto)
+        vm.settings.audioBitrate = .kbps(192)
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(192))
+    }
+
+    /// Same class of bug as the stale-channels case: a leftover high bitrate must not make the
+    /// combo check reject files once the load switches Audio to Copy, which takes no bitrate.
+    func testStaleHighBitrateDoesNotFailAACSourceOnCopy() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.audioCodec = .eac3
+        vm.settings.audioBitrate = .kbps(1536)
+        await vm.loadFiles([URL(fileURLWithPath: "/clip.mov")])
+        XCTAssertEqual(vm.settings.audioCodec, .copy)
+
+        await vm.convertAll()
+        XCTAssertEqual(engine.convertCount, 1)
+    }
 }
 
 /// Holds probes until the test releases them, to interleave loads deterministically.

@@ -207,7 +207,8 @@ struct ContentView: View {
             GridRow {
                 Text("Audio bitrate")
                 Picker("", selection: bitrateBinding) {
-                    ForEach(AudioBitrate.presets, id: \.self) { Text(label($0)).tag($0) }
+                    ForEach(CodecCompatibility.audioBitrateOptions(for: viewModel.settings.audioCodec),
+                            id: \.self) { Text(label($0)).tag($0) }
                 }.labelsHidden().disabled(!viewModel.settings.audioCodec.supportsBitrate)
             }
             GridRow {

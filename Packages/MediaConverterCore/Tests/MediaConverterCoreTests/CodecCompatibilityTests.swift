@@ -190,4 +190,43 @@ final class CodecCompatibilityTests: XCTestCase {
         s.channels = .surround71
         XCTAssertTrue(CodecCompatibility.isValidCombo(s))
     }
+
+    func testHighBitratesAreOnlyAcceptedWhereTheEncoderTakesThem() {
+        // Measured against ffmpeg 9.0.2: libopus rejects stereo above 512 kbps, mp3 and ac3
+        // clamp at 320/640 without saying so, eac3 honours 1536.
+        func combo(_ codec: AudioCodec, _ kbps: Int, container: Container = .mkv) -> ConversionSettings {
+            ConversionSettings(container: container, videoCodec: container.isAudioOnly ? .none : .copy,
+                               audioCodec: codec,
+                               crf: 20, audioBitrate: .kbps(kbps))
+        }
+        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.eac3, 1536)))
+        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.opus, 768)))
+        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.opus, 640)))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.opus, 512)))
+        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.mp3, 384, container: .mp3)))
+        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.ac3, 768)))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.ac3, 640)))
+        // Codecs that take no bitrate ignore it, so a leftover pick must not invalidate them.
+        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.copy, 1536)))
+        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.flac, 1536)))
+        // `Auto` is always valid.
+        var auto = combo(.opus, 0); auto.audioBitrate = .auto
+        XCTAssertTrue(CodecCompatibility.isValidCombo(auto))
+    }
+
+    func testBitrateOptionsOnlyOfferWhatIsValid() {
+        for codec in [AudioCodec.aac, .mp3, .opus, .ac3, .eac3] {
+            let options = CodecCompatibility.audioBitrateOptions(for: codec)
+            XCTAssertEqual(options.first, .auto, "\(codec)")
+            for option in options {
+                XCTAssertTrue(CodecCompatibility.isAudioBitrateValid(option, for: codec), "\(codec) \(option)")
+            }
+        }
+        // The 768-1536 kbps presets exist for E-AC-3 (Plex Direct Play use case) only.
+        let hd: Set<AudioBitrate> = [.kbps(768), .kbps(1024), .kbps(1536)]
+        XCTAssertTrue(hd.isSubset(of: CodecCompatibility.audioBitrateOptions(for: .eac3)))
+        for codec in [AudioCodec.aac, .mp3, .opus, .ac3] {
+            XCTAssertTrue(hd.isDisjoint(with: CodecCompatibility.audioBitrateOptions(for: codec)), "\(codec)")
+        }
+    }
 }

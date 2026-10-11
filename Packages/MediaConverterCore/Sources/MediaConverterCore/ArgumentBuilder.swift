@@ -180,15 +180,18 @@ public enum ArgumentBuilder {
                 case .unchanged:
                     break
                 case .none:
-                    dispositionArgs = ["-disposition:s", "0"]
+                    // `-default` clears only that flag; `-disposition:s 0` would also wipe
+                    // `forced`, so forced-subtitle tracks would stop showing on their own.
+                    dispositionArgs = ["-disposition:s", "-default"]
                 case .language(let code):
+                    let wanted = SubtitleDefault.canonicalLanguage(code)
                     let idx = source.subtitleLanguages.firstIndex {
-                        $0.caseInsensitiveCompare(code) == .orderedSame
+                        SubtitleDefault.canonicalLanguage($0) == wanted
                     }
                     // Clear every subtitle default first, then set the match.
-                    dispositionArgs = ["-disposition:s", "0"]
+                    dispositionArgs = ["-disposition:s", "-default"]
                     if let idx {
-                        dispositionArgs += ["-disposition:s:\(idx)", "default"]
+                        dispositionArgs += ["-disposition:s:\(idx)", "+default"]
                     }
                 }
             } else {
@@ -199,7 +202,11 @@ public enum ArgumentBuilder {
         }
 
         if s.effectiveTwoPass {
-            let pass1 = inputArgs + videoEncode
+            // Pass 1 must map the video the way pass 2 does: each encoder opens its stats
+            // file by output index, and ffmpeg's default selection would pick a single
+            // video, leaving a source with several real video streams without logs.
+            let pass1Map: [String] = s.preserveAllStreams ? ["-map", "0:V?"] : []
+            let pass1 = inputArgs + videoEncode + pass1Map
                 + ["-pass", "1", "-passlogfile", passLog, "-an", "-f", "null", "/dev/null"]
             let pass2 = inputArgs + videoEncode
                 + ["-pass", "2", "-passlogfile", passLog] + videoTag + audioArgs

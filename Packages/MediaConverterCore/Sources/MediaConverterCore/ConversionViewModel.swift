@@ -145,6 +145,11 @@ public final class ConversionViewModel: ObservableObject {
         if !allowed.contains(settings.channels) {
             settings.channels = allowed.last ?? .source
         }
+        // Same for the bitrate: a high E-AC-3 pick must not carry over to a codec that
+        // rejects or silently clamps it.
+        if !CodecCompatibility.isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec) {
+            settings.audioBitrate = CodecCompatibility.audioBitrateOptions(for: settings.audioCodec).last ?? .auto
+        }
     }
 
     /// Called when the video codec picker changes. Resets CRF to the new codec's default

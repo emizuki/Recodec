@@ -131,8 +131,8 @@ final class ArgumentBuilderTests: XCTestCase {
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
                                          source: multiTrack)
         // "eng" is the 2nd subtitle stream -> index 1, not its absolute stream index.
-        XCTAssertEqual(args[0].suffix(7),
-                       ["-c:s", "copy", "-disposition:s", "0", "-disposition:s:1", "default", "/out.mkv"])
+        XCTAssertEqual(pairs(args[0]).filter { $0[0].hasPrefix("-disposition:s") },
+                       [["-disposition:s", "-default"], ["-disposition:s:1", "+default"]])
     }
 
     func testSubtitleDefaultLanguageMissingClearsOnly() {
@@ -151,7 +151,52 @@ final class ArgumentBuilderTests: XCTestCase {
         s.subtitleDefault = .none
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
                                          source: multiTrack)
-        XCTAssertEqual(args[0].suffix(3), ["-disposition:s", "0", "/out.mkv"])
+        XCTAssertEqual(pairs(args[0]).filter { $0[0].hasPrefix("-disposition:s") },
+                       [["-disposition:s", "-default"]])
+    }
+
+    func testSubtitleDefaultMatchesBibliographicAndTerminologyCodes() {
+        // ISO 639-2 gives German two codes (ger/deu) and French two (fre/fra); MP4 and many
+        // encoders write the terminology form while the picker offers the bibliographic one.
+        let source = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac",
+                               subtitleLanguages: ["DEU", "eng", "fra"])
+        func indexFlagged(for code: String) -> [String]? {
+            var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
+            s.preserveAllStreams = true
+            s.subtitleDefault = .language(code)
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: source)[0]
+            return pairs(args).first { $0[0].hasPrefix("-disposition:s:") }
+        }
+        XCTAssertEqual(indexFlagged(for: "ger"), ["-disposition:s:0", "+default"])
+        XCTAssertEqual(indexFlagged(for: "fre"), ["-disposition:s:2", "+default"])
+        XCTAssertEqual(indexFlagged(for: "eng"), ["-disposition:s:1", "+default"])
+        XCTAssertNil(indexFlagged(for: "spa"), "no track in that language: only the clearing runs")
+    }
+
+    func testCanonicalLanguageMapsTerminologyToBibliographicOnly() {
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("deu"), "ger")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("FRA"), "fre")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("zho"), "chi")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("ger"), "ger")
+        // Most languages have a single code and must pass through (lowercased).
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("ENG"), "eng")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("jpn"), "jpn")
+    }
+
+    func testTwoPassMapsVideoInPassOneOnlyWhenKeepingAllStreams() {
+        // Each encoder opens its stats file by output index, so pass 1 has to map the video
+        // like pass 2 does or a source with several real video streams has no log for the rest.
+        var s = ConversionSettings(container: .mkv, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.rateControl = .bitrate
+        s.videoBitrateKbps = 2500
+        let off = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                        source: multiTrack, passLog: "/tmp/log")
+        XCTAssertFalse(off[0].contains("-map"), "default behaviour stays byte-identical")
+        s.preserveAllStreams = true
+        let on = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                       source: multiTrack, passLog: "/tmp/log")
+        XCTAssertEqual(maps(on[0]), ["0:V?"])
+        XCTAssertEqual(maps(on[0]).first, maps(on[1]).first, "both passes map the video the same way")
     }
 
     func testPreserveAllStreamsDropsSubsForAudioOnlyContainer() {
