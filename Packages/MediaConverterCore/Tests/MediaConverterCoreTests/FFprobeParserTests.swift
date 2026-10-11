@@ -59,16 +59,33 @@ final class FFprobeParserTests: XCTestCase {
         XCTAssertFalse(info.isHDR)
     }
 
-    func testParsesTheChannelCountOfTheFirstAudioStream() throws {
-        let json = """
-        {"streams":[{"codec_type":"video","codec_name":"h264"},
-                    {"codec_type":"audio","codec_name":"eac3","channels":6},
-                    {"codec_type":"audio","codec_name":"aac","channels":2}]}
-        """.data(using: .utf8)!
-        XCTAssertEqual(try FFprobeParser.parse(json).audioChannels, 6)
-        let none = """
-        {"streams":[{"codec_type":"video","codec_name":"h264"}]}
-        """.data(using: .utf8)!
-        XCTAssertNil(try FFprobeParser.parse(none).audioChannels)
+    func testChannelCountFollowsTheAudioStreamFfmpegSelects() throws {
+        // Rule measured on ffmpeg 9.0.2 (`map_auto_audio`): a stream flagged default wins, then the
+        // most channels, then the first of equals. `firstAudioChannels` is the first stream.
+        func probe(_ streams: [(channels: Int, isDefault: Bool)]) throws -> MediaInfo {
+            let audio = streams.map {
+                #"{"codec_type":"audio","codec_name":"pcm_s16le","channels":\#($0.channels),"disposition":{"default":\#($0.isDefault ? 1 : 0)}}"#
+            }.joined(separator: ",")
+            return try FFprobeParser.parse(Data(#"{"streams":[{"codec_type":"video","codec_name":"h264"},\#(audio)]}"#.utf8))
+        }
+        var info = try probe([(1, false), (2, false)])
+        XCTAssertEqual(info.audioChannels, 2, "most channels")
+        XCTAssertEqual(info.firstAudioChannels, 1)
+        info = try probe([(2, false), (1, true)])
+        XCTAssertEqual(info.audioChannels, 1, "the default flag outranks the channel count")
+        XCTAssertEqual(info.firstAudioChannels, 2)
+        info = try probe([(2, true), (6, true)])
+        XCTAssertEqual(info.audioChannels, 6, "both default: most channels")
+        info = try probe([(2, false), (2, false)])
+        XCTAssertEqual(info.audioChannels, 2)
+        info = try probe([(6, false)])
+        XCTAssertEqual(info.audioChannels, 6)
+        XCTAssertEqual(info.firstAudioChannels, 6)
+        let none = try FFprobeParser.parse(Data(#"{"streams":[{"codec_type":"video","codec_name":"h264"}]}"#.utf8))
+        XCTAssertNil(none.audioChannels)
+        XCTAssertNil(none.firstAudioChannels)
+        // A stream without a disposition or channel count still parses.
+        let sparse = try FFprobeParser.parse(Data(#"{"streams":[{"codec_type":"audio","codec_name":"aac"}]}"#.utf8))
+        XCTAssertNil(sparse.audioChannels)
     }
 }

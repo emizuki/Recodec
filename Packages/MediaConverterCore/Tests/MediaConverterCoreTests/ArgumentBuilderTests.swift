@@ -227,6 +227,22 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertNil(bitrate(build(channels: 1)))
     }
 
+    func testBitrateCeilingUsesTheAudioStreamThatIsActuallyEncoded() {
+        // Several audio streams: with nothing mapped ffmpeg encodes the one it selects (default
+        // flag, else most channels); with every stream kept, `-c:a:0` encodes the first.
+        var s = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 20,
+                                   audioBitrate: .kbps(512))
+        func bitrate() -> String? {
+            // A mono first track and a 5.1 selected one.
+            let source = MediaInfo(durationSeconds: 10, audioCodecName: "aac", audioChannels: 6, firstAudioChannels: 1)
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: source)[0]
+            return pairs(args).first { $0[0] == "-b:a" || $0[0] == "-b:a:0" }?[1]
+        }
+        XCTAssertEqual(bitrate(), "512k", "ffmpeg encodes the 5.1 stream, which takes 512")
+        s.preserveAllStreams = true
+        XCTAssertEqual(bitrate(), "256k", "every stream kept: -c:a:0 encodes the mono first stream")
+    }
+
     func testTwoPassMapsVideoInPassOneOnlyWhenKeepingAllStreams() {
         // Each encoder opens its stats file by output index, so pass 1 has to map the video
         // like pass 2 does or a source with several real video streams has no log for the rest.

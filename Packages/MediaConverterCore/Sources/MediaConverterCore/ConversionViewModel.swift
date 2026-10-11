@@ -148,10 +148,17 @@ public final class ConversionViewModel: ObservableObject {
         channelsChanged()
     }
 
-    /// Called when the channel picker changes (and after a codec change). The bitrate ceiling
-    /// depends on the layout: libopus takes 256 kbps per channel, so a high pick made on 5.1
-    /// must not carry over to stereo or mono, where the encoder rejects it. Same idea as the
-    /// channel clamp above.
+    /// The channel picker's entry point: sets the layout and normalises what depends on it, so a
+    /// view cannot forget the second step.
+    public func setChannels(_ channels: AudioChannels) {
+        settings.channels = channels
+        channelsChanged()
+    }
+
+    /// Clamps what depends on the layout (also called after a codec change). The bitrate ceiling
+    /// depends on it: libopus takes 256 kbps per channel, so a high pick made on 5.1 must not
+    /// carry over to stereo or mono, where the encoder rejects it. Same idea as the channel
+    /// clamp above.
     public func channelsChanged() {
         if !CodecCompatibility.isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec,
                                                    channels: settings.channels) {

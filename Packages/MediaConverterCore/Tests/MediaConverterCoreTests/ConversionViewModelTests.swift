@@ -525,7 +525,8 @@ final class ConversionViewModelTests: XCTestCase {
     func testAudioCodecChangeClampsABitrateTheNewCodecRejects() {
         let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
                                      toolsAvailable: true, fileExists: { _ in false })
-        // A high E-AC-3 pick must not carry over: Opus rejects it, MP3 and AC-3 clamp it silently.
+        // A high E-AC-3 pick must not carry over: Opus rejects it (stereo), MP3 and AC-3 clamp it silently.
+        vm.settings.channels = .stereo
         for (codec, expected) in [(AudioCodec.opus, 512), (.mp3, 320), (.ac3, 640), (.aac, 640)] {
             vm.settings.audioCodec = .eac3
             vm.settings.audioBitrate = .kbps(1536)
@@ -543,6 +544,17 @@ final class ConversionViewModelTests: XCTestCase {
         vm.settings.audioBitrate = .kbps(192)
         vm.audioCodecChanged()
         XCTAssertEqual(vm.settings.audioBitrate, .kbps(192))
+
+        // "Same as source" stays permissive: a batch can mix layouts, and ArgumentBuilder lowers each
+        // file's request. So a surround-capable pick survives for Opus and AAC, but not past mp3/ac3.
+        vm.settings.channels = .source
+        for (codec, expected) in [(AudioCodec.opus, 1536), (.aac, 1536), (.mp3, 320), (.ac3, 640)] {
+            vm.settings.audioCodec = .eac3
+            vm.settings.audioBitrate = .kbps(1536)
+            vm.settings.audioCodec = codec
+            vm.audioCodecChanged()
+            XCTAssertEqual(vm.settings.audioBitrate, .kbps(expected), "source layout, \(codec)")
+        }
     }
 
     func testChannelChangeClampsABitrateTheLayoutRejects() {
@@ -550,16 +562,15 @@ final class ConversionViewModelTests: XCTestCase {
                                      toolsAvailable: true, fileExists: { _ in false })
         // libopus takes 256 kbps per channel: a high pick made on 5.1 must not survive stereo or mono.
         vm.settings.audioCodec = .opus
-        vm.settings.channels = .surround51
+        vm.setChannels(.surround51)
         vm.settings.audioBitrate = .kbps(1536)
-        vm.channelsChanged()
+        vm.setChannels(.surround51)
         XCTAssertEqual(vm.settings.audioBitrate, .kbps(1536), "still valid on 5.1")
-        vm.settings.channels = .stereo
-        vm.channelsChanged()
+        vm.setChannels(.stereo)
         XCTAssertEqual(vm.settings.audioBitrate, .kbps(512))
-        vm.settings.channels = .mono
-        vm.channelsChanged()
+        vm.setChannels(.mono)
         XCTAssertEqual(vm.settings.audioBitrate, .kbps(256))
+        XCTAssertEqual(vm.settings.channels, .mono)
         // A codec change that also forces the layout down (mp3 has no 7.1) clamps both.
         vm.settings.audioCodec = .aac
         vm.settings.channels = .surround71

@@ -204,9 +204,10 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertTrue(valid(.opus, .mono, 256));        XCTAssertFalse(valid(.opus, .mono, 320))
         XCTAssertTrue(valid(.opus, .stereo, 512));      XCTAssertFalse(valid(.opus, .stereo, 640))
         XCTAssertTrue(valid(.opus, .surround51, 1536)); XCTAssertTrue(valid(.opus, .surround71, 1536))
-        // "Same as source" is not known until a file is probed: assume stereo here, and let
-        // ArgumentBuilder apply the file's real channel count.
-        XCTAssertTrue(valid(.opus, .source, 512));      XCTAssertFalse(valid(.opus, .source, 768))
+        // "Same as source" is not known until a file is probed and a batch can mix layouts, so the
+        // settings stay permissive (the widest ceiling); ArgumentBuilder lowers each file's request.
+        XCTAssertTrue(valid(.opus, .source, 1536));     XCTAssertTrue(valid(.aac, .source, 1536))
+        XCTAssertFalse(valid(.mp3, .source, 384, container: .mp3)); XCTAssertFalse(valid(.ac3, .source, 768))
         // AAC never fails; up to stereo it keeps the old 640, the 768+ presets are for surround.
         XCTAssertTrue(valid(.aac, .stereo, 640));       XCTAssertFalse(valid(.aac, .stereo, 768))
         XCTAssertTrue(valid(.aac, .surround51, 1024));  XCTAssertTrue(valid(.aac, .surround71, 1536))

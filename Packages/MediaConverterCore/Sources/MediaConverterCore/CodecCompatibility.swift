@@ -71,16 +71,16 @@ public enum CodecCompatibility {
         }
     }
 
-    /// Highest audio bitrate (kbps) each lossy encoder accepts or honours for `channels` output
-    /// channels, measured against ffmpeg 9.0.2. A preset above it is rejected or silently
-    /// clamped, so it must not be offered:
+    /// Highest audio bitrate (kbps) offered for each lossy encoder at `channels` output channels,
+    /// measured against ffmpeg 9.0.2. A preset above it is rejected or silently clamped:
     ///   - opus: libopus allows 256 kbps per channel, so mono fails above 256, stereo above
     ///     512; 5.1 and 7.1 take the whole list.
     ///   - mp3: capped at 320 kbps whatever the layout; anything higher is clamped.
     ///   - ac3: capped at 640 kbps whatever the layout; anything higher is clamped.
-    ///   - aac: never fails, but the encoder takes more per extra channel (about 220 kbps for
-    ///     mono, 420 stereo, 1100 for 5.1, 1500+ for 7.1). Up to stereo it keeps the old 640
-    ///     (ffmpeg clamps lower, silently); the 768+ presets are for surround.
+    ///   - aac: never refuses a value, but the encoder takes more per extra channel and plateaus
+    ///     (about 220 kbps for mono, 420 stereo, 1100 for 5.1, 1500+ for 7.1 on noise). This is a
+    ///     picker policy, not a hard limit: up to stereo the list keeps its old 640, surround gets
+    ///     the 768+ presets.
     ///   - eac3: honours up to 1536 kbps for every layout it accepts.
     /// nil for codecs that take no bitrate.
     public static func maxAudioKbps(for codec: AudioCodec, channels: Int) -> Int? {
@@ -94,11 +94,12 @@ public enum CodecCompatibility {
         }
     }
 
-    /// Channel count the bitrate rules assume for a layout. "Same as source" is not known
-    /// until a file is probed, so settings and the picker assume stereo; `ArgumentBuilder`
-    /// applies the real count per file.
+    /// Channel count the settings-level bitrate rules assume for a layout. "Same as source" is
+    /// not known until a file is probed and a batch can mix layouts, so it stays permissive (the
+    /// widest ceiling) and never hides a preset that some file in the batch can take;
+    /// `ArgumentBuilder` lowers the request to each file's real ceiling when converting.
     static func assumedChannelCount(_ channels: AudioChannels) -> Int {
-        channels.count ?? 2
+        channels.count ?? AudioChannels.surround71.count!
     }
 
     public static func audioBitrateOptions(for codec: AudioCodec, channels: AudioChannels) -> [AudioBitrate] {

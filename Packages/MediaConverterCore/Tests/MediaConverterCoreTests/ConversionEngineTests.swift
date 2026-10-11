@@ -364,9 +364,11 @@ final class ConversionEngineTests: XCTestCase {
         case audioWithCoverM4A
         /// hevc (`hvc1`) + aac + an mjpeg cover picture.
         case hevcCoverMP4
-        /// AAC with `channels` independent white-noise channels. Independent matters: a copied
-        /// channel compresses to almost nothing and would hide every bitrate limit.
-        case noiseM4A(channels: Int)
+        /// A WAV with `channels` independent white-noise channels (see `writeNoiseWAV`).
+        case noisePCM(channels: Int)
+        /// Two PCM audio streams with `first` and `second` independent channels, in an MKV. The
+        /// stream at index `defaultStream` carries the `default` flag.
+        case twoAudioMKV(first: Int, second: Int, defaultStream: Int)
     }
 
     private func makeLayout(_ tools: FFmpegTools, _ layout: Layout) throws -> URL {
@@ -416,14 +418,19 @@ final class ConversionEngineTests: XCTestCase {
         case .audioOnlyM4A:
             out = tmp("audio.m4a")
             _ = try run(tools.ffmpeg, base + audio + ["-ac", "2", "-c:a", "aac", "-y", out.path])
-        case .noiseM4A(let channels):
-            out = tmp("noise\(channels).m4a")
-            var inputs: [String] = []
-            for i in 1...channels {
-                inputs += ["-f", "lavfi", "-i", "anoisesrc=d=2:c=white:r=48000:a=0.5:s=\(i * 7)"]
-            }
-            let merge = channels > 1 ? ["-filter_complex", "amerge=inputs=\(channels)"] : []
-            _ = try run(tools.ffmpeg, base + inputs + merge + ["-c:a", "aac", "-y", out.path])
+        case .noisePCM(let channels):
+            out = tmp("noise\(channels).wav")
+            try writeNoiseWAV(tools, channels: channels, to: out)
+        case .twoAudioMKV(let first, let second, let defaultStream):
+            let a = tmp("a.wav"), b = tmp("b.wav"); scratch += [a, b]
+            try writeNoiseWAV(tools, channels: first, to: a)
+            try writeNoiseWAV(tools, channels: second, to: b)
+            out = tmp("twoaudio.mkv")
+            _ = try run(tools.ffmpeg, base + ["-i", a.path, "-i", b.path, "-map", "0:a", "-map", "1:a",
+                                              "-c:a", "pcm_s16le",
+                                              "-disposition:a:0", defaultStream == 0 ? "default" : "0",
+                                              "-disposition:a:1", defaultStream == 1 ? "default" : "0",
+                                              "-y", out.path])
         case .audioWithCoverM4A:
             let cover = try makeCover()
             out = tmp("audiocover.m4a")
@@ -669,31 +676,67 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertEqual(try layoutOf(tools, output).kinds, ["video", "video", "audio"])
     }
 
-    /// Every bitrate ceiling is checked against ffmpeg itself, per codec and layout: the largest
-    /// option the picker offers must convert, and for Opus (the only encoder that rejects instead
-    /// of clamping) the first preset above it must be refused, so the ceiling is neither too high
-    /// nor needlessly low. libopus takes 256 kbps per channel; mp3 and ac3 clamp, aac takes more
-    /// per extra channel.
+    /// A 2 s WAV of `channels` independent white-noise channels. Independent matters: a copied
+    /// channel compresses to almost nothing and would hide every bitrate limit. PCM is lossless, so
+    /// the encoder under test is given all of it.
+    private func writeNoiseWAV(_ tools: FFmpegTools, channels: Int, to url: URL) throws {
+        var inputs: [String] = []
+        for i in 1...channels { inputs += ["-f", "lavfi", "-i", "anoisesrc=d=2:c=white:r=48000:a=0.5:s=\(i * 7)"] }
+        let merge = channels > 1 ? ["-filter_complex", "amerge=inputs=\(channels)"] : []
+        _ = try run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error"] + inputs + merge
+                                  + ["-c:a", "pcm_s16le", "-y", url.path])
+    }
+
+    /// Average bitrate of an audio-only output, from its size and the source's duration.
+    private func outputKbps(_ url: URL, seconds: Double) -> Double {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)??.doubleValue ?? 0
+        return size * 8 / 1000 / seconds
+    }
+
+    private func audioStreams(_ tools: FFmpegTools, _ url: URL) throws -> [(codec: String, channels: Int)] {
+        let json = try run(tools.ffprobe, ["-v", "error", "-select_streams", "a", "-show_streams", "-of", "json", url.path])
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        return (root["streams"] as? [[String: Any]] ?? []).map {
+            ($0["codec_name"] as? String ?? "?", $0["channels"] as? Int ?? 0)
+        }
+    }
+
+    /// Every bitrate ceiling is checked against ffmpeg itself, per codec and layout, on a source with
+    /// as many independent channels as the layout asks for: the largest offered option must convert
+    /// AND come out near the request (so a clamp that lowers it wrongly is caught), and for Opus, the
+    /// only encoder that rejects instead of clamping, the first preset above the ceiling must be
+    /// refused when ffmpeg is called directly, so the ceiling is neither too high nor needlessly low.
     func testBitrateCeilingsHoldAgainstFfmpegForEveryLayout() async throws {
         guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
-        let input = try makeLayout(tools, .noiseM4A(channels: 2))
-        defer { discard(input) }
-        let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+        let probe = MediaProbe(ffprobe: tools.ffprobe)
+        var urls: [Int: URL] = [:]
+        defer { urls.values.forEach { discard($0) } }
+        for n in [1, 2, 6, 8] { urls[n] = try makeLayout(tools, .noisePCM(channels: n)) }
+        var infos: [Int: MediaInfo] = [:]
+        for (n, url) in urls { infos[n] = try await probe.probe(url) }
 
-        func convert(_ codec: AudioCodec, _ container: Container, _ layout: AudioChannels,
-                     _ bitrate: AudioBitrate) async -> Error? {
+        func settings(_ codec: AudioCodec, _ container: Container, _ layout: AudioChannels,
+                      _ bitrate: AudioBitrate) -> ConversionSettings {
+            var s = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 30)
+            s.channels = layout
+            s.audioBitrate = bitrate
+            return s
+        }
+        func convert(_ s: ConversionSettings, channels n: Int) async -> (error: Error?, kbps: Double) {
             let output = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("br-\(UUID().uuidString).\(container.fileExtension)")
+                .appendingPathComponent("br-\(UUID().uuidString).\(s.container.fileExtension)")
             defer { discard(output) }
-            var settings = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 30)
-            settings.channels = layout
-            settings.audioBitrate = bitrate
             do {
                 try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
-                    .convert(input: input, output: output, settings: settings, source: source) { _ in }
-                return nil
-            } catch { return error }
+                    .convert(input: urls[n]!, output: output, settings: s, source: infos[n]!) { _ in }
+                return (nil, outputKbps(output, seconds: infos[n]!.durationSeconds ?? 2))
+            } catch { return (error, 0) }
+        }
+        // How much of the request must show up in the output. AAC plateaus below it up to stereo
+        // (about 220 kbps mono, 420 stereo), so only surround is held to it.
+        func honouredRatio(_ codec: AudioCodec, _ layout: AudioChannels) -> Double? {
+            codec == .aac ? (layout == .surround51 || layout == .surround71 ? 0.6 : nil) : 0.85
         }
 
         let cases: [(codec: AudioCodec, container: Container, encoder: String)] = [
@@ -703,26 +746,33 @@ final class ConversionEngineTests: XCTestCase {
         for (codec, container, encoder) in cases where encoders.contains(" \(encoder) ") {
             for layout in [AudioChannels.mono, .stereo, .surround51, .surround71]
             where CodecCompatibility.channelOptions(for: codec).contains(layout) {
+                let n = layout.count!
                 let offered = CodecCompatibility.audioBitrateOptions(for: codec, channels: layout)
                 let label = "\(codec) \(layout)"
+                for option in offered {
+                    XCTAssertTrue(CodecCompatibility.isValidCombo(settings(codec, container, layout, option)),
+                                  "\(label): offered \(option) must be a valid combo")
+                }
                 for option in [offered.first!, offered.last!] {
-                    if let error = await convert(codec, container, layout, option) {
-                        XCTFail("\(label) offers \(option) but ffmpeg fails: \(error)")
+                    let (error, kbps) = await convert(settings(codec, container, layout, option), channels: n)
+                    if let error { XCTFail("\(label) offers \(option) but ffmpeg fails: \(error)"); continue }
+                    if case .kbps(let requested) = option, let ratio = honouredRatio(codec, layout) {
+                        XCTAssertGreaterThanOrEqual(kbps, Double(requested) * ratio,
+                                                    "\(label): asked for \(requested) kbps, the output is \(Int(kbps)) kbps")
                     }
                 }
                 if codec == .opus,
-                   let ceiling = CodecCompatibility.maxAudioKbps(for: codec, channels: layout.count ?? 2),
+                   let ceiling = CodecCompatibility.maxAudioKbps(for: codec, channels: n),
                    let above = AudioBitrate.presets.first(where: { if case .kbps(let k) = $0 { return k > ceiling } else { return false } }),
-                   case .kbps(let aboveKbps) = above, let channelCount = layout.count {
-                    // Straight to ffmpeg, bypassing ArgumentBuilder's own clamp, so the ceiling is
-                    // checked against the encoder itself and shown not to be needlessly low.
+                   case .kbps(let aboveKbps) = above {
+                    // Straight to ffmpeg, bypassing ArgumentBuilder's own clamp.
                     let output = URL(fileURLWithPath: NSTemporaryDirectory())
                         .appendingPathComponent("br-neg-\(UUID().uuidString).mkv")
                     defer { discard(output) }
                     let p = Process()
                     p.executableURL = URL(fileURLWithPath: tools.ffmpeg)
-                    p.arguments = ["-hide_banner", "-loglevel", "quiet", "-y", "-i", input.path, "-vn",
-                                   "-c:a", "libopus", "-b:a", "\(aboveKbps)k", "-ac", "\(channelCount)", output.path]
+                    p.arguments = ["-hide_banner", "-loglevel", "quiet", "-y", "-i", urls[n]!.path, "-vn",
+                                   "-c:a", "libopus", "-b:a", "\(aboveKbps)k", "-ac", "\(n)", output.path]
                     try p.run(); p.waitUntilExit()
                     XCTAssertNotEqual(p.terminationStatus, 0,
                                       "\(label): \(above) is above the ceiling, libopus is expected to refuse it")
@@ -731,13 +781,14 @@ final class ConversionEngineTests: XCTestCase {
         }
     }
 
-    /// "Same as source" leaves the layout to the file, so the picker can offer 512 kbps Opus
-    /// while the source is mono: libopus would refuse it. The builder lowers it per file.
+    /// "Same as source" leaves the layout to the file, and the picker stays permissive for it, so
+    /// 512 kbps Opus is offered while the source is mono: libopus would refuse it. The builder
+    /// lowers the request to what the file's layout takes.
     func testSourceLayoutBitrateIsLoweredForAMonoFile() async throws {
         guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
         guard encoders.contains(" libopus ") else { throw XCTSkip("ffmpeg has no libopus") }
-        let input = try makeLayout(tools, .noiseM4A(channels: 1))
+        let input = try makeLayout(tools, .noisePCM(channels: 1))
         defer { discard(input) }
         let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
         XCTAssertEqual(source.audioChannels, 1, "the probe must report the file's channel count")
@@ -745,13 +796,56 @@ final class ConversionEngineTests: XCTestCase {
         var settings = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 30)
         XCTAssertEqual(settings.channels, .source)
         settings.audioBitrate = .kbps(512)
-        XCTAssertTrue(CodecCompatibility.isValidCombo(settings), "valid under the stereo assumption")
+        XCTAssertTrue(CodecCompatibility.isValidCombo(settings), "the source layout stays permissive")
         let output = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("br-\(UUID().uuidString).mkv")
         defer { discard(output) }
         try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
             .convert(input: input, output: output, settings: settings, source: source) { _ in }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+        let kbps = outputKbps(output, seconds: source.durationSeconds ?? 2)
+        XCTAssertGreaterThan(kbps, 200, "lowered to the mono ceiling, not to nothing")
+        XCTAssertLessThan(kbps, 300, "256 kbps is the most libopus takes for one channel")
+    }
+
+    /// With several audio streams the ceiling must come from the one that is actually encoded:
+    /// the stream ffmpeg selects by itself (flagged default, else the most channels) when nothing is
+    /// mapped, or the first stream when every stream is kept (`-c:a:0`). Using the wrong one either
+    /// halves a valid request or lets libopus refuse a mono stream.
+    func testBitrateCeilingUsesTheAudioStreamThatIsActuallyEncoded() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
+        guard encoders.contains(" libopus ") else { throw XCTSkip("ffmpeg has no libopus") }
+        // (first, second, flagged default, channels of the stream ffmpeg selects)
+        for (first, second, flagged, selected) in [(1, 2, 1, 2), (2, 1, 1, 1)] {
+            let input = try makeLayout(tools, .twoAudioMKV(first: first, second: second, defaultStream: flagged))
+            defer { discard(input) }
+            let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+            XCTAssertEqual(source.audioChannels, selected, "fixture \(first)+\(second): the probe must follow ffmpeg")
+            XCTAssertEqual(source.firstAudioChannels, first)
+
+            var settings = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 30)
+            settings.audioBitrate = .kbps(512)
+            for keepAll in [false, true] {
+                settings.preserveAllStreams = keepAll
+                let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("br-\(UUID().uuidString).mkv")
+                defer { discard(output) }
+                try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+                    .convert(input: input, output: output, settings: settings, source: source) { _ in }
+                let streams = try audioStreams(tools, output)
+                let label = "\(first)+\(second) channels, keep all tracks: \(keepAll)"
+                if keepAll {
+                    XCTAssertEqual(streams.map { $0.codec }, ["opus", "pcm_s16le"], label)
+                    XCTAssertEqual(streams.first?.channels, first, label)
+                } else {
+                    XCTAssertEqual(streams.map { $0.codec }, ["opus"], label)
+                    XCTAssertEqual(streams.first?.channels, selected, label)
+                    // Stereo may keep its 512; a mono stream is lowered to 256, not refused.
+                    let expected = Double(min(512, 256 * selected))
+                    XCTAssertGreaterThanOrEqual(outputKbps(output, seconds: source.durationSeconds ?? 2), expected * 0.85, label)
+                }
+            }
+        }
     }
 }
 

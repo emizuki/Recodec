@@ -89,10 +89,13 @@ picker follows the same rule, because what an encoder takes depends on the codec
 the layout: MP3 stops at 320 kbps and AC-3 at 640 (higher requests are silently
 clamped), E-AC-3 goes up to 1536, Opus takes 256 kbps per channel (mono 256, stereo
 512, 5.1 and 7.1 up to 1536) and AAC keeps its 640 up to stereo, with the 768+
-presets for surround. With *Same as source* the picker assumes stereo and each file's
-real channel count is applied when converting, so a request the file's layout cannot
-take is lowered instead of failing. Changing codec or channels clamps an out-of-range
-selection down rather than failing at convert time.
+presets for surround. With *Same as source* the picker keeps the whole list, since a
+batch can mix layouts, and each file's request is lowered to what its own channel
+count takes (a mono source asked for 512 kbps Opus gets 256 instead of a failed run;
+a request is never raised). With several audio tracks that is the track ffmpeg
+encodes: the one flagged default, else the one with the most channels, or the first
+when every track is kept. Changing codec or channels clamps an out-of-range selection
+down rather than failing at convert time.
 
 For genuinely lossless output, pair **Video: Copy** with **Audio: FLAC** in MKV:
 the video is passed through untouched and the audio is re-encoded without loss

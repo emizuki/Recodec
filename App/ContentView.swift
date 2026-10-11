@@ -290,7 +290,7 @@ struct ContentView: View {
     }
     private var channelsBinding: Binding<AudioChannels> {
         Binding(get: { viewModel.settings.channels },
-                set: { viewModel.settings.channels = $0; viewModel.channelsChanged() })
+                set: { viewModel.setChannels($0) })
     }
     private var audioReencoding: Bool {
         viewModel.settings.audioCodec != .copy && viewModel.settings.audioCodec != .none

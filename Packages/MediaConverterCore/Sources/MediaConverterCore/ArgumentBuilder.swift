@@ -120,12 +120,15 @@ public enum ArgumentBuilder {
 
         // The picker only offers bitrates the chosen layout accepts, but "same as source"
         // leaves the layout to the file: a mono source asked for 512 kbps Opus would be
-        // rejected by libopus (256 kbps per channel). Apply the ceiling with the file's real
-        // channel count so such a request is lowered instead of failing the run.
+        // rejected by libopus (256 kbps per channel). Apply the ceiling with the real channel
+        // count of the stream that gets encoded so such a request is lowered instead of failing
+        // the run: the one ffmpeg selects by itself, or the first one when every stream is kept
+        // (`-c:a:0`). Never raised, and an unknown count assumes stereo.
         var audioBitrate = s.audioBitrate
+        let encodedChannels = s.channels.count
+            ?? (s.preserveAllStreams ? source.firstAudioChannels : source.audioChannels) ?? 2
         if case .kbps(let requested) = s.audioBitrate,
-           let ceiling = CodecCompatibility.maxAudioKbps(for: s.audioCodec,
-                                                          channels: s.channels.count ?? source.audioChannels ?? 2) {
+           let ceiling = CodecCompatibility.maxAudioKbps(for: s.audioCodec, channels: encodedChannels) {
             audioBitrate = .kbps(min(requested, ceiling))
         }
 
