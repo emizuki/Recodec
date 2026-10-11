@@ -18,9 +18,10 @@ struct SettingsPanel: View {
     /// Two control rows plus the gap between them: what a caption replaces when the codec
     /// is Copy, so the column keeps its height.
     private static let twoRows = rowHeight * 2 + rowSpacing
-    /// The tallest the columns get (Video with a preset and both toggles, or Audio with
-    /// "More options" open). Reserved so neither state changes the window height.
-    private static let columnsMinHeight: CGFloat = 172
+    /// The Video column at its tallest (rate rows, preset, VideoToolbox). Reserved so changing
+    /// the codec does not change the window height. Opening "More options" can make the Audio
+    /// column taller than this, and the window then grows by the difference.
+    private static let columnsMinHeight: CGFloat = 146
     private static let columnGap: CGFloat = 24
     private static let pickerGap: CGFloat = 12
     /// Label column of a control row. A menu Picker keeps its intrinsic width whatever frame
@@ -114,12 +115,6 @@ struct SettingsPanel: View {
                 }
                 Toggle("Use VideoToolbox", isOn: $viewModel.settings.useHardware)
                     .disabled(settings.videoCodec.hardwareEncoder == nil)
-                Toggle("Tone map HDR to SDR", isOn: $viewModel.settings.toneMapHDR)
-                    .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
-                          + "VideoToolbox, so it no longer looks washed out on SDR "
-                          + "displays. Only HDR files are affected; SDR files in the batch "
-                          + "convert as usual. Switched on automatically when the first HDR "
-                          + "file is loaded.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -205,8 +200,8 @@ struct SettingsPanel: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    /// Stream mapping. Collapsed, it still says when "Keep all audio and subtitle tracks" is
-    /// on, so a changed setting is never hidden.
+    /// Options that are not touched on most runs: HDR tone mapping and stream mapping.
+    /// Collapsed, it still says what is switched on, so a changed setting is never hidden.
     private var moreOptions: some View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
             Button {
@@ -218,8 +213,8 @@ struct SettingsPanel: View {
                         .rotationEffect(.degrees(showMore ? 90 : 0))
                         .frame(width: 10)
                     Text("More options")
-                    if !showMore && settings.preserveAllStreams {
-                        Text("· all tracks kept").font(.caption).foregroundStyle(.secondary)
+                    if !showMore, let summary = activeSummary {
+                        Text("· \(summary)").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -229,6 +224,14 @@ struct SettingsPanel: View {
             .accessibilityValue(showMore ? "expanded" : "collapsed")
 
             if showMore {
+                if canToneMap {
+                    Toggle("Tone map HDR to SDR", isOn: $viewModel.settings.toneMapHDR)
+                        .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
+                              + "VideoToolbox, so it no longer looks washed out on SDR "
+                              + "displays. Only HDR files are affected; SDR files in the batch "
+                              + "convert as usual. Switched on automatically when the first HDR "
+                              + "file is loaded.")
+                }
                 Toggle("Keep all audio and subtitle tracks", isOn: $viewModel.settings.preserveAllStreams)
                     .help("Map every audio and subtitle stream from the source (and "
                           + "attachments, into MKV) instead of only the first of each kind. "
@@ -241,6 +244,22 @@ struct SettingsPanel: View {
                 }
             }
         }
+    }
+
+    /// Tone mapping needs the video re-encoded, so it has nothing to do for Copy or None.
+    private var canToneMap: Bool {
+        settings.videoCodec != .copy && settings.videoCodec != .none
+    }
+
+    /// What is switched on inside "More options", for its collapsed title. Tone mapping is
+    /// reported only while an HDR file is loaded, since it does nothing otherwise.
+    private var activeSummary: String? {
+        var active: [String] = []
+        if viewModel.hasHDRSource && canToneMap {
+            active.append(settings.toneMapHDR ? "tone map on" : "tone map off")
+        }
+        if settings.preserveAllStreams { active.append("all tracks kept") }
+        return active.isEmpty ? nil : active.joined(separator: ", ")
     }
 
     // MARK: - Pieces

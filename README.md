@@ -118,7 +118,7 @@ is re-encoded without care — or just viewed on an SDR screen — the BT.2020
 pixels get interpreted as Rec.709 and the picture goes flat and grey.
 
 Recodec reads the video stream's transfer function when a file is loaded. If it
-is PQ or HLG the **Tone map HDR to SDR** toggle (Video column) switches itself on, and the
+is PQ or HLG the **Tone map HDR to SDR** toggle (under **More options**) switches itself on, and the
 conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
 on VideoToolbox before encoding: H.264 and HEVC are decoded in hardware, other
 codecs by ffmpeg, and the frames are then uploaded to the GPU for the mapping
