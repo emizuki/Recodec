@@ -9,6 +9,17 @@ public struct IPhoneCompatibility: Sendable, Equatable {
     }
 }
 
+/// How many of the files read so far end up iPhone-ready under the current settings.
+public struct CompatibilityTally: Equatable {
+    public let ready: Int
+    public let total: Int
+
+    public init(ready: Int, total: Int) {
+        self.ready = ready
+        self.total = total
+    }
+}
+
 public enum IPhoneCompatibilityChecker {
     private static let videoCodecs: Set<String> = ["h264", "hevc"]
     private static let audioCodecs: Set<String> = ["aac", "mp3", "alac"]
