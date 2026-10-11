@@ -86,7 +86,12 @@ struct SettingsPanel: View {
     private var videoColumn: some View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
             Text("Video").font(.headline)
-            if settings.videoCodec == .copy {
+            if settings.container == .gif {
+                // The GIF branch of ArgumentBuilder passes only `-an`: the picture is made with
+                // ffmpeg's defaults and nothing below applies. (Its video codec is .none, which
+                // would otherwise read as "no video".)
+                note("The GIF is made with ffmpeg's defaults, so no video options apply.")
+            } else if settings.videoCodec == .copy {
                 note("Video is copied as it is, with no re-encode.")
             } else if settings.videoCodec == .none {
                 note("No video in the output.")
@@ -194,7 +199,8 @@ struct SettingsPanel: View {
                      : "Audio is copied as it is, with no re-encode.")
                     .frame(height: Self.twoRows, alignment: .topLeading)
             }
-            moreOptions
+            // Stream mapping is ignored for GIF, so there is nothing to open.
+            if settings.container != .gif { moreOptions }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
