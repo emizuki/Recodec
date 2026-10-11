@@ -7,6 +7,7 @@ public enum FFprobeParser {
             let codec_type: String?
             let codec_name: String?
             let color_transfer: String?
+            let channels: Int?
             let tags: Tags?
         }
         struct Format: Decodable { let duration: String? }
@@ -18,7 +19,8 @@ public enum FFprobeParser {
         let probe = try JSONDecoder().decode(Probe.self, from: data)
         let videoStream = probe.streams?.first { $0.codec_type == "video" }
         let video = videoStream?.codec_name
-        let audio = probe.streams?.first { $0.codec_type == "audio" }?.codec_name
+        let audioStream = probe.streams?.first { $0.codec_type == "audio" }
+        let audio = audioStream?.codec_name
         let duration = probe.format?.duration.flatMap(Double.init)
         // Subtitle order here must match ffmpeg's own `-disposition:s:<n>` index,
         // so keep untagged streams in place as empty strings rather than dropping them.
@@ -27,6 +29,7 @@ public enum FFprobeParser {
             .map { $0.tags?.language ?? "" } ?? []
         return MediaInfo(durationSeconds: duration, videoCodecName: video,
                          audioCodecName: audio, subtitleLanguages: subtitles,
-                         colorTransfer: videoStream?.color_transfer)
+                         colorTransfer: videoStream?.color_transfer,
+                         audioChannels: audioStream?.channels)
     }
 }

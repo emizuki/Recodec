@@ -191,42 +191,56 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertTrue(CodecCompatibility.isValidCombo(s))
     }
 
-    func testHighBitratesAreOnlyAcceptedWhereTheEncoderTakesThem() {
-        // Measured against ffmpeg 9.0.2: libopus rejects stereo above 512 kbps, mp3 and ac3
-        // clamp at 320/640 without saying so, eac3 honours 1536.
-        func combo(_ codec: AudioCodec, _ kbps: Int, container: Container = .mkv) -> ConversionSettings {
-            ConversionSettings(container: container, videoCodec: container.isAudioOnly ? .none : .copy,
-                               audioCodec: codec,
-                               crf: 20, audioBitrate: .kbps(kbps))
+    func testBitrateCeilingFollowsTheChannelLayout() {
+        // Measured against ffmpeg 9.0.2 (the engine tests run the same limits through ffmpeg):
+        // libopus takes 256 kbps per channel, mp3 and ac3 clamp at 320/640 whatever the layout.
+        func valid(_ codec: AudioCodec, _ channels: AudioChannels, _ kbps: Int,
+                   container: Container = .mkv) -> Bool {
+            var s = ConversionSettings(container: container, videoCodec: container.isAudioOnly ? .none : .copy,
+                                       audioCodec: codec, crf: 20, audioBitrate: .kbps(kbps))
+            s.channels = channels
+            return CodecCompatibility.isValidCombo(s)
         }
-        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.eac3, 1536)))
-        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.opus, 768)))
-        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.opus, 640)))
-        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.opus, 512)))
-        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.mp3, 384, container: .mp3)))
-        XCTAssertFalse(CodecCompatibility.isValidCombo(combo(.ac3, 768)))
-        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.ac3, 640)))
+        XCTAssertTrue(valid(.opus, .mono, 256));        XCTAssertFalse(valid(.opus, .mono, 320))
+        XCTAssertTrue(valid(.opus, .stereo, 512));      XCTAssertFalse(valid(.opus, .stereo, 640))
+        XCTAssertTrue(valid(.opus, .surround51, 1536)); XCTAssertTrue(valid(.opus, .surround71, 1536))
+        // "Same as source" is not known until a file is probed: assume stereo here, and let
+        // ArgumentBuilder apply the file's real channel count.
+        XCTAssertTrue(valid(.opus, .source, 512));      XCTAssertFalse(valid(.opus, .source, 768))
+        // AAC never fails; up to stereo it keeps the old 640, the 768+ presets are for surround.
+        XCTAssertTrue(valid(.aac, .stereo, 640));       XCTAssertFalse(valid(.aac, .stereo, 768))
+        XCTAssertTrue(valid(.aac, .surround51, 1024));  XCTAssertTrue(valid(.aac, .surround71, 1536))
+        XCTAssertTrue(valid(.mp3, .stereo, 320, container: .mp3))
+        XCTAssertFalse(valid(.mp3, .stereo, 384, container: .mp3))
+        XCTAssertTrue(valid(.ac3, .surround51, 640));   XCTAssertFalse(valid(.ac3, .surround51, 768))
+        for layout in [AudioChannels.mono, .stereo, .surround51] {
+            XCTAssertTrue(valid(.eac3, layout, 1536), "eac3 honours 1536 on every layout it accepts")
+        }
         // Codecs that take no bitrate ignore it, so a leftover pick must not invalidate them.
-        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.copy, 1536)))
-        XCTAssertTrue(CodecCompatibility.isValidCombo(combo(.flac, 1536)))
+        XCTAssertTrue(valid(.copy, .source, 1536))
+        XCTAssertTrue(valid(.flac, .stereo, 1536))
         // `Auto` is always valid.
-        var auto = combo(.opus, 0); auto.audioBitrate = .auto
+        var auto = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .opus, crf: 20)
+        auto.channels = .mono
+        XCTAssertEqual(auto.audioBitrate, .auto)
         XCTAssertTrue(CodecCompatibility.isValidCombo(auto))
     }
 
-    func testBitrateOptionsOnlyOfferWhatIsValid() {
-        for codec in [AudioCodec.aac, .mp3, .opus, .ac3, .eac3] {
-            let options = CodecCompatibility.audioBitrateOptions(for: codec)
-            XCTAssertEqual(options.first, .auto, "\(codec)")
-            for option in options {
-                XCTAssertTrue(CodecCompatibility.isAudioBitrateValid(option, for: codec), "\(codec) \(option)")
-            }
+    func testBitrateOptionsFollowTheLayout() {
+        func kbps(_ codec: AudioCodec, _ channels: AudioChannels) -> [Int] {
+            CodecCompatibility.audioBitrateOptions(for: codec, channels: channels)
+                .compactMap { if case .kbps(let k) = $0 { return k } else { return nil } }
         }
-        // The 768-1536 kbps presets exist for E-AC-3 (Plex Direct Play use case) only.
-        let hd: Set<AudioBitrate> = [.kbps(768), .kbps(1024), .kbps(1536)]
-        XCTAssertTrue(hd.isSubset(of: CodecCompatibility.audioBitrateOptions(for: .eac3)))
-        for codec in [AudioCodec.aac, .mp3, .opus, .ac3] {
-            XCTAssertTrue(hd.isDisjoint(with: CodecCompatibility.audioBitrateOptions(for: codec)), "\(codec)")
-        }
+        XCTAssertEqual(CodecCompatibility.audioBitrateOptions(for: .opus, channels: .mono).first, .auto)
+        XCTAssertEqual(kbps(.opus, .mono).last, 256)
+        XCTAssertEqual(kbps(.opus, .stereo).last, 512)
+        XCTAssertEqual(kbps(.opus, .surround51).last, 1536)
+        XCTAssertEqual(kbps(.aac, .stereo).last, 640)
+        XCTAssertEqual(kbps(.aac, .surround71).last, 1536)
+        XCTAssertEqual(kbps(.mp3, .stereo).last, 320)
+        XCTAssertEqual(kbps(.ac3, .surround51).last, 640)
+        XCTAssertEqual(kbps(.eac3, .mono).last, 1536, "E-AC-3 is the codec the 768-1536 presets exist for")
+        // A codec without a bitrate keeps the whole list.
+        XCTAssertEqual(CodecCompatibility.audioBitrateOptions(for: .flac, channels: .stereo), AudioBitrate.presets)
     }
 }

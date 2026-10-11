@@ -183,6 +183,50 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertEqual(SubtitleDefault.canonicalLanguage("jpn"), "jpn")
     }
 
+    func testCanonicalLanguageCoversEveryBibliographicTerminologyPair() {
+        // The 20 ISO 639-2 languages that have two codes (Library of Congress table), written
+        // out independently of the implementation's own dictionary.
+        let pairs: [(bibliographic: String, terminology: String)] = [
+            ("alb", "sqi"), ("arm", "hye"), ("baq", "eus"), ("bur", "mya"), ("chi", "zho"),
+            ("cze", "ces"), ("dut", "nld"), ("fre", "fra"), ("geo", "kat"), ("ger", "deu"),
+            ("gre", "ell"), ("ice", "isl"), ("mac", "mkd"), ("mao", "mri"), ("may", "msa"),
+            ("per", "fas"), ("rum", "ron"), ("slo", "slk"), ("tib", "bod"), ("wel", "cym"),
+        ]
+        XCTAssertEqual(pairs.count, 20)
+        for (b, t) in pairs {
+            XCTAssertEqual(SubtitleDefault.canonicalLanguage(t), b, "\(t) -> \(b)")
+            XCTAssertEqual(SubtitleDefault.canonicalLanguage(b), b, "\(b) stays")
+            XCTAssertEqual(SubtitleDefault.canonicalLanguage(t.uppercased()), b, "case-insensitive")
+        }
+    }
+
+    func testAudioBitrateIsLoweredToTheCeilingOfTheFilesRealLayout() {
+        // "Same as source" leaves the layout to the file; libopus takes 256 kbps per channel.
+        var s = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 20,
+                                   audioBitrate: .kbps(512))
+        func bitrate(_ args: [String]) -> String? { pairs(args).first { $0[0] == "-b:a" || $0[0] == "-b:a:0" }?[1] }
+        func build(channels: Int?) -> [String] {
+            let source = MediaInfo(durationSeconds: 10, audioCodecName: "aac", audioChannels: channels)
+            return ArgumentBuilder.build(settings: s, input: "/in.m4a", output: "/out.mkv", source: source)[0]
+        }
+        XCTAssertEqual(bitrate(build(channels: 1)), "256k", "mono source")
+        XCTAssertEqual(bitrate(build(channels: 2)), "512k", "stereo source: unchanged")
+        XCTAssertEqual(bitrate(build(channels: 6)), "512k", "never raised")
+        XCTAssertEqual(bitrate(build(channels: nil)), "512k", "unknown count assumes stereo")
+        // An explicit layout wins over the source's count.
+        s.channels = .mono
+        XCTAssertEqual(bitrate(build(channels: 6)), "256k")
+        // The same applies when every stream is kept (the audio options are stream-qualified).
+        s.channels = .source
+        s.preserveAllStreams = true
+        s.container = .mkv
+        s.videoCodec = .copy
+        XCTAssertEqual(bitrate(build(channels: 1)), "256k")
+        // Auto adds no `-b:a` at all.
+        s.audioBitrate = .auto
+        XCTAssertNil(bitrate(build(channels: 1)))
+    }
+
     func testTwoPassMapsVideoInPassOneOnlyWhenKeepingAllStreams() {
         // Each encoder opens its stats file by output index, so pass 1 has to map the video
         // like pass 2 does or a source with several real video streams has no log for the rest.

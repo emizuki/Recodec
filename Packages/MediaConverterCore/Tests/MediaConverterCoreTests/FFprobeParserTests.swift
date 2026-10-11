@@ -58,4 +58,17 @@ final class FFprobeParserTests: XCTestCase {
         XCTAssertNil(info.colorTransfer)
         XCTAssertFalse(info.isHDR)
     }
+
+    func testParsesTheChannelCountOfTheFirstAudioStream() throws {
+        let json = """
+        {"streams":[{"codec_type":"video","codec_name":"h264"},
+                    {"codec_type":"audio","codec_name":"eac3","channels":6},
+                    {"codec_type":"audio","codec_name":"aac","channels":2}]}
+        """.data(using: .utf8)!
+        XCTAssertEqual(try FFprobeParser.parse(json).audioChannels, 6)
+        let none = """
+        {"streams":[{"codec_type":"video","codec_name":"h264"}]}
+        """.data(using: .utf8)!
+        XCTAssertNil(try FFprobeParser.parse(none).audioChannels)
+    }
 }

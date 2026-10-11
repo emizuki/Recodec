@@ -145,10 +145,18 @@ public final class ConversionViewModel: ObservableObject {
         if !allowed.contains(settings.channels) {
             settings.channels = allowed.last ?? .source
         }
-        // Same for the bitrate: a high E-AC-3 pick must not carry over to a codec that
-        // rejects or silently clamps it.
-        if !CodecCompatibility.isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec) {
-            settings.audioBitrate = CodecCompatibility.audioBitrateOptions(for: settings.audioCodec).last ?? .auto
+        channelsChanged()
+    }
+
+    /// Called when the channel picker changes (and after a codec change). The bitrate ceiling
+    /// depends on the layout: libopus takes 256 kbps per channel, so a high pick made on 5.1
+    /// must not carry over to stereo or mono, where the encoder rejects it. Same idea as the
+    /// channel clamp above.
+    public func channelsChanged() {
+        if !CodecCompatibility.isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec,
+                                                   channels: settings.channels) {
+            settings.audioBitrate = CodecCompatibility.audioBitrateOptions(
+                for: settings.audioCodec, channels: settings.channels).last ?? .auto
         }
     }
 

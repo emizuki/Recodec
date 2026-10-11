@@ -42,7 +42,7 @@ public enum CodecCompatibility {
         return videoCodecs(for: settings.container).contains(settings.videoCodec)
             && audioCodecs(for: settings.container).contains(settings.audioCodec)
             && channelOptions(for: settings.audioCodec).contains(settings.channels)
-            && isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec)
+            && isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec, channels: settings.channels)
     }
 
     /// Channel layouts each audio encoder actually accepts. ffmpeg aborts the run
@@ -71,32 +71,47 @@ public enum CodecCompatibility {
         }
     }
 
-    /// Highest audio bitrate (kbps) each lossy encoder accepts or honours, measured against
-    /// ffmpeg 9.0.2. A preset above it is rejected or silently clamped, so it must not be offered:
-    ///   - opus: libopus allows 256 kbps per channel; stereo fails above 512 (mono above 256).
-    ///   - mp3: capped at 320 kbps; anything higher is clamped.
-    ///   - ac3: capped at 640 kbps; anything higher is clamped.
-    ///   - aac: left at the old 640 (ffmpeg's encoder clamps lower for stereo, silently).
-    ///   - eac3: honours up to 1536 kbps, which is why the list goes that high.
+    /// Highest audio bitrate (kbps) each lossy encoder accepts or honours for `channels` output
+    /// channels, measured against ffmpeg 9.0.2. A preset above it is rejected or silently
+    /// clamped, so it must not be offered:
+    ///   - opus: libopus allows 256 kbps per channel, so mono fails above 256, stereo above
+    ///     512; 5.1 and 7.1 take the whole list.
+    ///   - mp3: capped at 320 kbps whatever the layout; anything higher is clamped.
+    ///   - ac3: capped at 640 kbps whatever the layout; anything higher is clamped.
+    ///   - aac: never fails, but the encoder takes more per extra channel (about 220 kbps for
+    ///     mono, 420 stereo, 1100 for 5.1, 1500+ for 7.1). Up to stereo it keeps the old 640
+    ///     (ffmpeg clamps lower, silently); the 768+ presets are for surround.
+    ///   - eac3: honours up to 1536 kbps for every layout it accepts.
     /// nil for codecs that take no bitrate.
-    public static func maxAudioKbps(for codec: AudioCodec) -> Int? {
+    public static func maxAudioKbps(for codec: AudioCodec, channels: Int) -> Int? {
         switch codec {
         case .mp3:  return 320
         case .ac3:  return 640
-        case .opus: return 512
-        case .aac:  return 640
         case .eac3: return 1536
+        case .opus: return min(1536, 256 * max(channels, 1))
+        case .aac:  return channels > 2 ? 1536 : 640
         default:    return nil
         }
     }
 
-    public static func audioBitrateOptions(for codec: AudioCodec) -> [AudioBitrate] {
-        guard let max = maxAudioKbps(for: codec) else { return AudioBitrate.presets }
+    /// Channel count the bitrate rules assume for a layout. "Same as source" is not known
+    /// until a file is probed, so settings and the picker assume stereo; `ArgumentBuilder`
+    /// applies the real count per file.
+    static func assumedChannelCount(_ channels: AudioChannels) -> Int {
+        channels.count ?? 2
+    }
+
+    public static func audioBitrateOptions(for codec: AudioCodec, channels: AudioChannels) -> [AudioBitrate] {
+        guard let max = maxAudioKbps(for: codec, channels: assumedChannelCount(channels)) else {
+            return AudioBitrate.presets
+        }
         return AudioBitrate.presets.filter { if case .kbps(let k) = $0 { return k <= max }; return true }
     }
 
-    public static func isAudioBitrateValid(_ bitrate: AudioBitrate, for codec: AudioCodec) -> Bool {
-        guard let max = maxAudioKbps(for: codec), case .kbps(let k) = bitrate else { return true }
+    public static func isAudioBitrateValid(_ bitrate: AudioBitrate, for codec: AudioCodec,
+                                           channels: AudioChannels) -> Bool {
+        guard let max = maxAudioKbps(for: codec, channels: assumedChannelCount(channels)),
+              case .kbps(let k) = bitrate else { return true }
         return k <= max
     }
 }

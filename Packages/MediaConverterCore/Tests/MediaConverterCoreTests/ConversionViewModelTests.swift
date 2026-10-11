@@ -532,7 +532,8 @@ final class ConversionViewModelTests: XCTestCase {
             vm.settings.audioCodec = codec
             vm.audioCodecChanged()
             XCTAssertEqual(vm.settings.audioBitrate, .kbps(expected), "\(codec)")
-            XCTAssertTrue(CodecCompatibility.audioBitrateOptions(for: codec).contains(vm.settings.audioBitrate))
+            XCTAssertTrue(CodecCompatibility.audioBitrateOptions(for: codec, channels: vm.settings.channels)
+                .contains(vm.settings.audioBitrate))
         }
         // Auto and a pick the new codec accepts are left alone.
         vm.settings.audioBitrate = .auto
@@ -542,6 +543,31 @@ final class ConversionViewModelTests: XCTestCase {
         vm.settings.audioBitrate = .kbps(192)
         vm.audioCodecChanged()
         XCTAssertEqual(vm.settings.audioBitrate, .kbps(192))
+    }
+
+    func testChannelChangeClampsABitrateTheLayoutRejects() {
+        let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
+                                     toolsAvailable: true, fileExists: { _ in false })
+        // libopus takes 256 kbps per channel: a high pick made on 5.1 must not survive stereo or mono.
+        vm.settings.audioCodec = .opus
+        vm.settings.channels = .surround51
+        vm.settings.audioBitrate = .kbps(1536)
+        vm.channelsChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(1536), "still valid on 5.1")
+        vm.settings.channels = .stereo
+        vm.channelsChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(512))
+        vm.settings.channels = .mono
+        vm.channelsChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(256))
+        // A codec change that also forces the layout down (mp3 has no 7.1) clamps both.
+        vm.settings.audioCodec = .aac
+        vm.settings.channels = .surround71
+        vm.settings.audioBitrate = .kbps(1536)
+        vm.settings.audioCodec = .mp3
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.channels, .stereo)
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(320))
     }
 
     /// Same class of bug as the stale-channels case: a leftover high bitrate must not make the

@@ -197,7 +197,7 @@ struct ContentView: View {
             }
             GridRow {
                 Text("Channels")
-                Picker("", selection: $viewModel.settings.channels) {
+                Picker("", selection: channelsBinding) {
                     ForEach(CodecCompatibility.channelOptions(for: viewModel.settings.audioCodec),
                             id: \.self) { Text(label($0)).tag($0) }
                 }
@@ -207,7 +207,8 @@ struct ContentView: View {
             GridRow {
                 Text("Audio bitrate")
                 Picker("", selection: bitrateBinding) {
-                    ForEach(CodecCompatibility.audioBitrateOptions(for: viewModel.settings.audioCodec),
+                    ForEach(CodecCompatibility.audioBitrateOptions(for: viewModel.settings.audioCodec,
+                                                                   channels: viewModel.settings.channels),
                             id: \.self) { Text(label($0)).tag($0) }
                 }.labelsHidden().disabled(!viewModel.settings.audioCodec.supportsBitrate)
             }
@@ -286,6 +287,10 @@ struct ContentView: View {
     private var bitrateBinding: Binding<AudioBitrate> {
         Binding(get: { viewModel.settings.audioBitrate },
                 set: { viewModel.settings.audioBitrate = $0 })
+    }
+    private var channelsBinding: Binding<AudioChannels> {
+        Binding(get: { viewModel.settings.channels },
+                set: { viewModel.settings.channels = $0; viewModel.channelsChanged() })
     }
     private var audioReencoding: Bool {
         viewModel.settings.audioCodec != .copy && viewModel.settings.audioCodec != .none

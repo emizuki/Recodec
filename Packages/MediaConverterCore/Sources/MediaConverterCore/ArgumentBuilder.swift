@@ -118,6 +118,17 @@ public enum ArgumentBuilder {
                             "-color_trc", "bt709"]
         }
 
+        // The picker only offers bitrates the chosen layout accepts, but "same as source"
+        // leaves the layout to the file: a mono source asked for 512 kbps Opus would be
+        // rejected by libopus (256 kbps per channel). Apply the ceiling with the file's real
+        // channel count so such a request is lowered instead of failing the run.
+        var audioBitrate = s.audioBitrate
+        if case .kbps(let requested) = s.audioBitrate,
+           let ceiling = CodecCompatibility.maxAudioKbps(for: s.audioCodec,
+                                                          channels: s.channels.count ?? source.audioChannels ?? 2) {
+            audioBitrate = .kbps(min(requested, ceiling))
+        }
+
         var audioArgs: [String] = []
         switch s.audioCodec {
         case .none:
@@ -132,7 +143,7 @@ public enum ArgumentBuilder {
                     // second-generation lossy copy at the primary track's bitrate.
                     // Transcode the first audio stream only and carry the rest through.
                     audioArgs = ["-c:a", "copy", "-c:a:0", enc]
-                    if s.audioCodec.supportsBitrate, let bitrate = s.audioBitrate.ffmpegArgument {
+                    if s.audioCodec.supportsBitrate, let bitrate = audioBitrate.ffmpegArgument {
                         audioArgs += ["-b:a:0", bitrate]
                     }
                     if let ch = s.channels.count {
@@ -140,7 +151,7 @@ public enum ArgumentBuilder {
                     }
                 } else {
                     audioArgs = ["-c:a", enc]
-                    if s.audioCodec.supportsBitrate, let bitrate = s.audioBitrate.ffmpegArgument {
+                    if s.audioCodec.supportsBitrate, let bitrate = audioBitrate.ffmpegArgument {
                         audioArgs += ["-b:a", bitrate]
                     }
                     if let ch = s.channels.count {

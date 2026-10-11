@@ -11,15 +11,19 @@ public struct MediaInfo: Sendable, Equatable {
     /// ffprobe `color_transfer` of the first video stream (e.g. `smpte2084`,
     /// `arib-std-b67`, `bt709`). nil when untagged or audio-only.
     public var colorTransfer: String?
+    /// Channel count of the first audio stream. Needed to apply the per-layout audio
+    /// bitrate ceiling when the output layout is "same as source". nil when unknown.
+    public var audioChannels: Int?
 
     public init(durationSeconds: Double? = nil, videoCodecName: String? = nil,
                 audioCodecName: String? = nil, subtitleLanguages: [String] = [],
-                colorTransfer: String? = nil) {
+                colorTransfer: String? = nil, audioChannels: Int? = nil) {
         self.durationSeconds = durationSeconds
         self.videoCodecName = videoCodecName
         self.audioCodecName = audioCodecName
         self.subtitleLanguages = subtitleLanguages
         self.colorTransfer = colorTransfer
+        self.audioChannels = audioChannels
     }
 
     /// True when the video stream carries an HDR transfer function (PQ or HLG).

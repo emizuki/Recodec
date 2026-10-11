@@ -364,6 +364,9 @@ final class ConversionEngineTests: XCTestCase {
         case audioWithCoverM4A
         /// hevc (`hvc1`) + aac + an mjpeg cover picture.
         case hevcCoverMP4
+        /// AAC with `channels` independent white-noise channels. Independent matters: a copied
+        /// channel compresses to almost nothing and would hide every bitrate limit.
+        case noiseM4A(channels: Int)
     }
 
     private func makeLayout(_ tools: FFmpegTools, _ layout: Layout) throws -> URL {
@@ -413,6 +416,14 @@ final class ConversionEngineTests: XCTestCase {
         case .audioOnlyM4A:
             out = tmp("audio.m4a")
             _ = try run(tools.ffmpeg, base + audio + ["-ac", "2", "-c:a", "aac", "-y", out.path])
+        case .noiseM4A(let channels):
+            out = tmp("noise\(channels).m4a")
+            var inputs: [String] = []
+            for i in 1...channels {
+                inputs += ["-f", "lavfi", "-i", "anoisesrc=d=2:c=white:r=48000:a=0.5:s=\(i * 7)"]
+            }
+            let merge = channels > 1 ? ["-filter_complex", "amerge=inputs=\(channels)"] : []
+            _ = try run(tools.ffmpeg, base + inputs + merge + ["-c:a", "aac", "-y", out.path])
         case .audioWithCoverM4A:
             let cover = try makeCover()
             out = tmp("audiocover.m4a")
@@ -658,35 +669,89 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertEqual(try layoutOf(tools, output).kinds, ["video", "video", "audio"])
     }
 
-    /// Every bitrate the picker offers must convert. libopus rejects stereo above 512 kbps (the old
-    /// 640 preset and the new 768+ ones failed outright) and mp3/ac3 clamp theirs without saying so.
-    func testEveryOfferedAudioBitrateConverts() async throws {
+    /// Every bitrate ceiling is checked against ffmpeg itself, per codec and layout: the largest
+    /// option the picker offers must convert, and for Opus (the only encoder that rejects instead
+    /// of clamping) the first preset above it must be refused, so the ceiling is neither too high
+    /// nor needlessly low. libopus takes 256 kbps per channel; mp3 and ac3 clamp, aac takes more
+    /// per extra channel.
+    func testBitrateCeilingsHoldAgainstFfmpegForEveryLayout() async throws {
         guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
-        let input = try makeLayout(tools, .audioOnlyM4A)   // stereo AAC
+        let input = try makeLayout(tools, .noiseM4A(channels: 2))
         defer { discard(input) }
         let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+
+        func convert(_ codec: AudioCodec, _ container: Container, _ layout: AudioChannels,
+                     _ bitrate: AudioBitrate) async -> Error? {
+            let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("br-\(UUID().uuidString).\(container.fileExtension)")
+            defer { discard(output) }
+            var settings = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 30)
+            settings.channels = layout
+            settings.audioBitrate = bitrate
+            do {
+                try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+                    .convert(input: input, output: output, settings: settings, source: source) { _ in }
+                return nil
+            } catch { return error }
+        }
 
         let cases: [(codec: AudioCodec, container: Container, encoder: String)] = [
             (.aac, .m4a, "aac"), (.mp3, .mp3, "libmp3lame"), (.ac3, .m4a, "ac3"),
             (.eac3, .mkv, "eac3"), (.opus, .mkv, "libopus"),
         ]
         for (codec, container, encoder) in cases where encoders.contains(" \(encoder) ") {
-            for option in CodecCompatibility.audioBitrateOptions(for: codec) {
-                let output = URL(fileURLWithPath: NSTemporaryDirectory())
-                    .appendingPathComponent("br-\(UUID().uuidString).\(container.fileExtension)")
-                defer { discard(output) }
-                var settings = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 30)
-                settings.audioBitrate = option
-                XCTAssertTrue(CodecCompatibility.isValidCombo(settings), "\(codec) \(option) must be a valid combo")
-                do {
-                    try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
-                        .convert(input: input, output: output, settings: settings, source: source) { _ in }
-                } catch {
-                    XCTFail("\(codec) at \(option) is offered but fails: \(error)")
+            for layout in [AudioChannels.mono, .stereo, .surround51, .surround71]
+            where CodecCompatibility.channelOptions(for: codec).contains(layout) {
+                let offered = CodecCompatibility.audioBitrateOptions(for: codec, channels: layout)
+                let label = "\(codec) \(layout)"
+                for option in [offered.first!, offered.last!] {
+                    if let error = await convert(codec, container, layout, option) {
+                        XCTFail("\(label) offers \(option) but ffmpeg fails: \(error)")
+                    }
+                }
+                if codec == .opus,
+                   let ceiling = CodecCompatibility.maxAudioKbps(for: codec, channels: layout.count ?? 2),
+                   let above = AudioBitrate.presets.first(where: { if case .kbps(let k) = $0 { return k > ceiling } else { return false } }),
+                   case .kbps(let aboveKbps) = above, let channelCount = layout.count {
+                    // Straight to ffmpeg, bypassing ArgumentBuilder's own clamp, so the ceiling is
+                    // checked against the encoder itself and shown not to be needlessly low.
+                    let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                        .appendingPathComponent("br-neg-\(UUID().uuidString).mkv")
+                    defer { discard(output) }
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+                    p.arguments = ["-hide_banner", "-loglevel", "quiet", "-y", "-i", input.path, "-vn",
+                                   "-c:a", "libopus", "-b:a", "\(aboveKbps)k", "-ac", "\(channelCount)", output.path]
+                    try p.run(); p.waitUntilExit()
+                    XCTAssertNotEqual(p.terminationStatus, 0,
+                                      "\(label): \(above) is above the ceiling, libopus is expected to refuse it")
                 }
             }
         }
+    }
+
+    /// "Same as source" leaves the layout to the file, so the picker can offer 512 kbps Opus
+    /// while the source is mono: libopus would refuse it. The builder lowers it per file.
+    func testSourceLayoutBitrateIsLoweredForAMonoFile() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
+        guard encoders.contains(" libopus ") else { throw XCTSkip("ffmpeg has no libopus") }
+        let input = try makeLayout(tools, .noiseM4A(channels: 1))
+        defer { discard(input) }
+        let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+        XCTAssertEqual(source.audioChannels, 1, "the probe must report the file's channel count")
+
+        var settings = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 30)
+        XCTAssertEqual(settings.channels, .source)
+        settings.audioBitrate = .kbps(512)
+        XCTAssertTrue(CodecCompatibility.isValidCombo(settings), "valid under the stereo assumption")
+        let output = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("br-\(UUID().uuidString).mkv")
+        defer { discard(output) }
+        try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+            .convert(input: input, output: output, settings: settings, source: source) { _ in }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
     }
 }
 
