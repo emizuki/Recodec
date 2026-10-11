@@ -59,6 +59,13 @@ public final class ConversionViewModel: ObservableObject {
             do {
                 let info = try await probe(url)
                 guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
+                // HDR sources look washed out on SDR displays unless tone mapped, so switch
+                // it on when the list goes from having no HDR source to having one. Decided
+                // here, as each result lands, not from a snapshot taken before the awaits:
+                // the list can change meanwhile (overlapping loads, Remove, Clear All), and
+                // a user who turned it off with an HDR file loaded must not see it flip
+                // back on. Never switched off automatically.
+                if info.isHDR && !hasHDRSource { settings.toneMapHDR = true }
                 items[index].info = info
                 items[index].status = .ready
             } catch {
@@ -69,7 +76,15 @@ public final class ConversionViewModel: ObservableObject {
         // On a fresh load (list was empty), default the audio codec from the first source.
         if wasEmpty, let first = items.compactMap({ $0.info }).first {
             settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
+            // Copy/None accept only `.source` channels; a stale Stereo/5.1 pick would
+            // otherwise fail the combo check for every file in the batch.
+            audioCodecChanged()
         }
+    }
+
+    /// Whether any loaded source carries an HDR transfer function.
+    public var hasHDRSource: Bool {
+        items.contains { $0.info?.isHDR == true }
     }
 
     public func convertAll() async {
@@ -129,6 +144,26 @@ public final class ConversionViewModel: ObservableObject {
         let allowed = CodecCompatibility.channelOptions(for: settings.audioCodec)
         if !allowed.contains(settings.channels) {
             settings.channels = allowed.last ?? .source
+        }
+        channelsChanged()
+    }
+
+    /// The channel picker's entry point: sets the layout and normalises what depends on it, so a
+    /// view cannot forget the second step.
+    public func setChannels(_ channels: AudioChannels) {
+        settings.channels = channels
+        channelsChanged()
+    }
+
+    /// Clamps what depends on the layout (also called after a codec change). The bitrate ceiling
+    /// depends on it: libopus takes 256 kbps per channel, so a high pick made on 5.1 must not
+    /// carry over to stereo or mono, where the encoder rejects it. Same idea as the channel
+    /// clamp above.
+    public func channelsChanged() {
+        if !CodecCompatibility.isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec,
+                                                   channels: settings.channels) {
+            settings.audioBitrate = CodecCompatibility.audioBitrateOptions(
+                for: settings.audioCodec, channels: settings.channels).last ?? .auto
         }
     }
 

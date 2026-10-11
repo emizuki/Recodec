@@ -382,4 +382,235 @@ final class ConversionViewModelTests: XCTestCase {
         vm.audioCodecChanged()
         XCTAssertEqual(vm.settings.channels, .stereo)
     }
+
+    // MARK: - HDR auto-detection
+
+    func testLoadingHDRSourceEnablesToneMap() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                    colorTransfer: "smpte2084") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        XCTAssertFalse(vm.settings.toneMapHDR)
+        XCTAssertFalse(vm.hasHDRSource)
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+        XCTAssertTrue(vm.hasHDRSource)
+    }
+
+    func testLoadingSDRSourceLeavesToneMapAlone() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac",
+                                    colorTransfer: "bt709") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR)
+        XCTAssertFalse(vm.hasHDRSource)
+
+        // A deliberate manual choice must survive adding more SDR files.
+        vm.settings.toneMapHDR = true
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr2.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+    }
+
+    func testAddingHDRToExistingSDRBatchEnablesToneMap() async {
+        let hdrPaths: Set<String> = ["/hdr.mov"]
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                          colorTransfer: hdrPaths.contains(url.path) ? "arib-std-b67" : "bt709")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR)
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR, "not only on first load — HDR can arrive later in the batch")
+    }
+
+    func testManualOffSurvivesAddingMoreFiles() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                          colorTransfer: url.lastPathComponent.hasPrefix("hdr") ? "smpte2084" : "bt709")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr1.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+
+        vm.settings.toneMapHDR = false
+        await vm.loadFiles([URL(fileURLWithPath: "/sdr.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR, "adding an SDR file must not undo a manual off")
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr2.mov")])
+        XCTAssertFalse(vm.settings.toneMapHDR, "nor must adding a second HDR file")
+
+        // A fresh list is a fresh decision: the first HDR source switches it on again.
+        vm.clearAll()
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr3.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+    }
+
+    /// A load that started before the HDR file arrived must not undo the user's manual
+    /// off when it finally finishes: the decision is taken as each result lands.
+    func testManualOffSurvivesAnOverlappingSlowLoad() async {
+        let gate = ProbeGate()
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { url in
+                if url.lastPathComponent == "slow.mov" { await gate.wait() }
+                return MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                 colorTransfer: url.lastPathComponent.hasPrefix("hdr") ? "smpte2084" : "bt709")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        let slow = Task { await vm.loadFiles([URL(fileURLWithPath: "/slow.mov")]) }
+        while vm.items.isEmpty { await Task.yield() }
+
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.settings.toneMapHDR)
+        vm.settings.toneMapHDR = false
+
+        await gate.open()
+        await slow.value
+        XCTAssertFalse(vm.settings.toneMapHDR, "the slow SDR load finishing must not re-enable it")
+    }
+
+    func testRemovedHDRFileDoesNotEnableToneMap() async {
+        let gate = ProbeGate()
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in
+                await gate.wait()
+                return MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                 colorTransfer: "smpte2084")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        let load = Task { await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")]) }
+        while vm.items.isEmpty { await Task.yield() }
+        vm.clearAll()
+        await gate.open()
+        await load.value
+        XCTAssertTrue(vm.items.isEmpty)
+        XCTAssertFalse(vm.settings.toneMapHDR, "a file the user already removed is not a source")
+    }
+
+    /// Regression: with an AAC source the first load switches Audio to Copy, whose only
+    /// valid channel layout is "same as source". A Stereo pick made earlier must be
+    /// reset, or the combo check rejects every file in the batch.
+    func testStereoPickedBeforeLoadDoesNotFailAACSourceOnCopy() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.channels = .stereo
+        await vm.loadFiles([URL(fileURLWithPath: "/clip.mov")])
+        XCTAssertEqual(vm.settings.audioCodec, .copy)
+
+        await vm.convertAll()
+        XCTAssertEqual(engine.convertCount, 1)
+        if case .done = vm.items[0].status {} else {
+            XCTFail("expected the file to convert, got \(vm.items[0].status)")
+        }
+    }
+
+    func testAudioCodecChangeClampsABitrateTheNewCodecRejects() {
+        let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
+                                     toolsAvailable: true, fileExists: { _ in false })
+        // A high E-AC-3 pick must not carry over: Opus rejects it (stereo), MP3 and AC-3 clamp it silently.
+        vm.settings.channels = .stereo
+        for (codec, expected) in [(AudioCodec.opus, 512), (.mp3, 320), (.ac3, 640), (.aac, 640)] {
+            vm.settings.audioCodec = .eac3
+            vm.settings.audioBitrate = .kbps(1536)
+            vm.settings.audioCodec = codec
+            vm.audioCodecChanged()
+            XCTAssertEqual(vm.settings.audioBitrate, .kbps(expected), "\(codec)")
+            XCTAssertTrue(CodecCompatibility.audioBitrateOptions(for: codec, channels: vm.settings.channels)
+                .contains(vm.settings.audioBitrate))
+        }
+        // Auto and a pick the new codec accepts are left alone.
+        vm.settings.audioBitrate = .auto
+        vm.settings.audioCodec = .opus
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .auto)
+        vm.settings.audioBitrate = .kbps(192)
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(192))
+
+        // "Same as source" stays permissive: a batch can mix layouts, and ArgumentBuilder lowers each
+        // file's request. So a surround-capable pick survives for Opus and AAC, but not past mp3/ac3.
+        vm.settings.channels = .source
+        for (codec, expected) in [(AudioCodec.opus, 1536), (.aac, 1536), (.mp3, 320), (.ac3, 640)] {
+            vm.settings.audioCodec = .eac3
+            vm.settings.audioBitrate = .kbps(1536)
+            vm.settings.audioCodec = codec
+            vm.audioCodecChanged()
+            XCTAssertEqual(vm.settings.audioBitrate, .kbps(expected), "source layout, \(codec)")
+        }
+    }
+
+    func testChannelChangeClampsABitrateTheLayoutRejects() {
+        let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
+                                     toolsAvailable: true, fileExists: { _ in false })
+        // libopus takes 256 kbps per channel: a high pick made on 5.1 must not survive stereo or mono.
+        vm.settings.audioCodec = .opus
+        vm.setChannels(.surround51)
+        vm.settings.audioBitrate = .kbps(1536)
+        vm.setChannels(.surround51)
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(1536), "still valid on 5.1")
+        vm.setChannels(.stereo)
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(512))
+        vm.setChannels(.mono)
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(256))
+        XCTAssertEqual(vm.settings.channels, .mono)
+        // A codec change that also forces the layout down (mp3 has no 7.1) clamps both.
+        vm.settings.audioCodec = .aac
+        vm.settings.channels = .surround71
+        vm.settings.audioBitrate = .kbps(1536)
+        vm.settings.audioCodec = .mp3
+        vm.audioCodecChanged()
+        XCTAssertEqual(vm.settings.channels, .stereo)
+        XCTAssertEqual(vm.settings.audioBitrate, .kbps(320))
+    }
+
+    /// Same class of bug as the stale-channels case: a leftover high bitrate must not make the
+    /// combo check reject files once the load switches Audio to Copy, which takes no bitrate.
+    func testStaleHighBitrateDoesNotFailAACSourceOnCopy() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.audioCodec = .eac3
+        vm.settings.audioBitrate = .kbps(1536)
+        await vm.loadFiles([URL(fileURLWithPath: "/clip.mov")])
+        XCTAssertEqual(vm.settings.audioCodec, .copy)
+
+        await vm.convertAll()
+        XCTAssertEqual(engine.convertCount, 1)
+    }
+}
+
+/// Holds probes until the test releases them, to interleave loads deterministically.
+private actor ProbeGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
 }

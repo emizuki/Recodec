@@ -42,6 +42,7 @@ public enum CodecCompatibility {
         return videoCodecs(for: settings.container).contains(settings.videoCodec)
             && audioCodecs(for: settings.container).contains(settings.audioCodec)
             && channelOptions(for: settings.audioCodec).contains(settings.channels)
+            && isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec, channels: settings.channels)
     }
 
     /// Channel layouts each audio encoder actually accepts. ffmpeg aborts the run
@@ -68,5 +69,50 @@ public enum CodecCompatibility {
             // No encoder runs, so `-ac` is never emitted; keep the picker inert.
             return [.source]
         }
+    }
+
+    /// Highest audio bitrate (kbps) offered for each lossy encoder at `channels` output channels,
+    /// measured against ffmpeg 9.0.2. A preset above it is rejected or silently clamped:
+    ///   - opus: libopus allows 256 kbps per channel, so mono fails above 256, stereo above
+    ///     512; 5.1 and 7.1 take the whole list.
+    ///   - mp3: capped at 320 kbps whatever the layout; anything higher is clamped.
+    ///   - ac3: capped at 640 kbps whatever the layout; anything higher is clamped.
+    ///   - aac: never refuses a value, but the encoder takes more per extra channel and plateaus
+    ///     (about 220 kbps for mono, 420 stereo, 1100 for 5.1, 1500+ for 7.1 on noise). This is a
+    ///     picker policy, not a hard limit: up to stereo the list keeps its old 640, surround gets
+    ///     the 768+ presets.
+    ///   - eac3: honours up to 1536 kbps for every layout it accepts.
+    /// nil for codecs that take no bitrate.
+    public static func maxAudioKbps(for codec: AudioCodec, channels: Int) -> Int? {
+        switch codec {
+        case .mp3:  return 320
+        case .ac3:  return 640
+        case .eac3: return 1536
+        case .opus: return min(1536, 256 * max(channels, 1))
+        case .aac:  return channels > 2 ? 1536 : 640
+        default:    return nil
+        }
+    }
+
+    /// Channel count the settings-level bitrate rules assume for a layout. "Same as source" is
+    /// not known until a file is probed and a batch can mix layouts, so it stays permissive (the
+    /// widest ceiling) and never hides a preset that some file in the batch can take;
+    /// `ArgumentBuilder` lowers the request to each file's real ceiling when converting.
+    static func assumedChannelCount(_ channels: AudioChannels) -> Int {
+        channels.count ?? AudioChannels.surround71.count!
+    }
+
+    public static func audioBitrateOptions(for codec: AudioCodec, channels: AudioChannels) -> [AudioBitrate] {
+        guard let max = maxAudioKbps(for: codec, channels: assumedChannelCount(channels)) else {
+            return AudioBitrate.presets
+        }
+        return AudioBitrate.presets.filter { if case .kbps(let k) = $0 { return k <= max }; return true }
+    }
+
+    public static func isAudioBitrateValid(_ bitrate: AudioBitrate, for codec: AudioCodec,
+                                           channels: AudioChannels) -> Bool {
+        guard let max = maxAudioKbps(for: codec, channels: assumedChannelCount(channels)),
+              case .kbps(let k) = bitrate else { return true }
+        return k <= max
     }
 }

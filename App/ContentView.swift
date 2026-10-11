@@ -197,7 +197,7 @@ struct ContentView: View {
             }
             GridRow {
                 Text("Channels")
-                Picker("", selection: $viewModel.settings.channels) {
+                Picker("", selection: channelsBinding) {
                     ForEach(CodecCompatibility.channelOptions(for: viewModel.settings.audioCodec),
                             id: \.self) { Text(label($0)).tag($0) }
                 }
@@ -207,7 +207,9 @@ struct ContentView: View {
             GridRow {
                 Text("Audio bitrate")
                 Picker("", selection: bitrateBinding) {
-                    ForEach(AudioBitrate.presets, id: \.self) { Text(label($0)).tag($0) }
+                    ForEach(CodecCompatibility.audioBitrateOptions(for: viewModel.settings.audioCodec,
+                                                                   channels: viewModel.settings.channels),
+                            id: \.self) { Text(label($0)).tag($0) }
                 }.labelsHidden().disabled(!viewModel.settings.audioCodec.supportsBitrate)
             }
             GridRow {
@@ -216,10 +218,26 @@ struct ContentView: View {
                     .disabled(viewModel.settings.videoCodec.hardwareEncoder == nil)
             }
             GridRow {
+                Text("HDR")
+                HStack(spacing: 8) {
+                    Toggle("Tone map to SDR", isOn: $viewModel.settings.toneMapHDR)
+                        .disabled(viewModel.settings.videoCodec == .copy
+                                  || viewModel.settings.videoCodec == .none)
+                        .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
+                              + "VideoToolbox, so it no longer looks washed out on SDR "
+                              + "displays. Requires re-encoding the video. Only HDR files are "
+                              + "affected; SDR files in the batch convert as usual. Switched on "
+                              + "automatically when the first HDR file is loaded.")
+                    if viewModel.hasHDRSource {
+                        Text("HDR source").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            GridRow {
                 Text("Streams")
                 Toggle("Keep all tracks", isOn: $viewModel.settings.preserveAllStreams)
-                    .help("Map every stream from the source (all audio, subtitle and "
-                          + "attachment tracks) instead of only the first of each kind. "
+                    .help("Map every audio and subtitle stream from the source (and "
+                          + "attachments, into MKV) instead of only the first of each kind. "
                           + "The target container must be able to hold them.")
             }
             GridRow {
@@ -269,6 +287,10 @@ struct ContentView: View {
     private var bitrateBinding: Binding<AudioBitrate> {
         Binding(get: { viewModel.settings.audioBitrate },
                 set: { viewModel.settings.audioBitrate = $0 })
+    }
+    private var channelsBinding: Binding<AudioChannels> {
+        Binding(get: { viewModel.settings.channels },
+                set: { viewModel.setChannels($0) })
     }
     private var audioReencoding: Bool {
         viewModel.settings.audioCodec != .copy && viewModel.settings.audioCodec != .none

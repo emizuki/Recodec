@@ -27,19 +27,48 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertFalse(args[0].contains("-disposition:s"))
     }
 
-    func testPreserveAllStreamsMapsEverythingAndCopiesSubs() {
-        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3,
-                                   crf: 20, channels: .surround51, audioBitrate: .kbps(1536))
+    /// Values of every `-map` in an argv, in order.
+    private func maps(_ args: [String]) -> [String] {
+        args.indices.dropLast().filter { args[$0] == "-map" }.map { args[$0 + 1] }
+    }
+
+    func testPreserveAllStreamsMapsByKindNeverEverything() {
+        // A blanket `-map 0` also maps data streams (iPhone `mebx`, MP4 chapter text
+        // tracks), attachments and cover art, which most muxers reject.
+        func mapped(_ container: Container, _ video: VideoCodec, audio: AudioCodec = .aac) -> [String] {
+            var s = ConversionSettings(container: container, videoCodec: video, audioCodec: audio, crf: 20)
+            s.preserveAllStreams = true
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out", source: multiTrack)
+            return maps(args[0])
+        }
+        // Video maps are optional (`?`): an audio-only source has no video stream, and a
+        // required map would abort the run for it.
+        // Re-encode: `0:V` leaves cover art out instead of encoding it as a second video track.
+        XCTAssertEqual(mapped(.mp4, .h264), ["0:V?", "0:a?", "0:s?"])
+        // Video copy: `0:v` so an attached picture is carried through untouched.
+        XCTAssertEqual(mapped(.mp4, .copy), ["0:v?", "0:a?", "0:s?"])
+        // Only Matroska stores attachments.
+        XCTAssertEqual(mapped(.mkv, .copy), ["0:v?", "0:a?", "0:s?", "0:t?"])
+        // No video encoder, nothing to map for it.
+        XCTAssertEqual(mapped(.mp4, .none), ["0:a?", "0:s?"])
+        // MP3/FLAC/WAV muxers hold exactly one audio stream, M4A any number.
+        XCTAssertEqual(mapped(.mp3, .none, audio: .mp3), ["0:a:0"])
+        XCTAssertEqual(mapped(.flac, .none, audio: .flac), ["0:a:0"])
+        XCTAssertEqual(mapped(.wav, .none, audio: .pcm), ["0:a:0"])
+        XCTAssertEqual(mapped(.m4a, .none), ["0:a"])
+    }
+
+    func testPreserveAllStreamsMapsVideoFirstSoTwoPassStatsLineUp() {
+        // Pass 1 (default selection) writes `<log>-0.log` for the video. Pass 2 opens the
+        // log by output stream index, so the video must be output stream 0 here too.
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.rateControl = .bitrate
+        s.videoBitrateKbps = 2500
         s.preserveAllStreams = true
-        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
-                                         source: multiTrack)
-        XCTAssertEqual(args, [[
-            "-hide_banner", "-y", "-i", "/in.mkv",
-            "-c:v", "copy",
-            "-c:a", "copy", "-c:a:0", "eac3", "-b:a:0", "1536k", "-ac:a:0", "6",
-            "-map", "0", "-c:s", "copy",
-            "/out.mkv"
-        ]])
+        let cmds = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mp4",
+                                         source: multiTrack, passLog: "/tmp/log")
+        XCTAssertEqual(cmds.count, 2)
+        XCTAssertEqual(maps(cmds[1]).first, "0:V?")
     }
 
     func testPreserveAllStreamsTranscodesOnlyFirstAudioTrack() {
@@ -59,6 +88,30 @@ final class ArgumentBuilderTests: XCTestCase {
         let cIdx = args.firstIndex(of: "-c:a")!
         XCTAssertEqual(args[cIdx + 1], "copy")
         XCTAssertLessThan(cIdx, args.firstIndex(of: "-c:a:0")!)
+        // The qualified options must also carry the chosen values, not just exist.
+        XCTAssertEqual(args[args.firstIndex(of: "-b:a:0")! + 1], "1536k")
+        XCTAssertEqual(args[args.firstIndex(of: "-ac:a:0")! + 1], "6")
+    }
+
+    /// Pairs of adjacent arguments, for asserting a flag is followed by its value.
+    private func pairs(_ args: [String]) -> [[String]] {
+        zip(args, args.dropFirst()).map { [$0, $1] }
+    }
+
+    func testPreserveAllStreamsTagsOnlyTheFirstVideoStream() {
+        // A cover picture may follow the video; `-tag:v hvc1` would hit it too and the
+        // MP4 muxer rejects the combination. Off by default: argv stays unchanged.
+        let hevcSource = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac")
+        for video in [VideoCodec.hevc, .copy] {
+            var s = ConversionSettings(container: .mp4, videoCodec: video, audioCodec: .aac, crf: 20)
+            s.preserveAllStreams = true
+            let on = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hevcSource)[0]
+            XCTAssertTrue(pairs(on).contains(["-tag:v:0", "hvc1"]), "\(video)")
+            XCTAssertFalse(on.contains("-tag:v"), "\(video)")
+            s.preserveAllStreams = false
+            let off = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hevcSource)[0]
+            XCTAssertTrue(pairs(off).contains(["-tag:v", "hvc1"]), "\(video)")
+        }
     }
 
     func testPreserveAllStreamsWithCopyAudioIsUnqualified() {
@@ -78,9 +131,8 @@ final class ArgumentBuilderTests: XCTestCase {
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
                                          source: multiTrack)
         // "eng" is the 2nd subtitle stream -> index 1, not its absolute stream index.
-        XCTAssertEqual(args[0].suffix(7),
-                       ["-map", "0", "-c:s", "copy",
-                        "-disposition:s", "0", "-disposition:s:1", "default", "/out.mkv"].suffix(7))
+        XCTAssertEqual(pairs(args[0]).filter { $0[0].hasPrefix("-disposition:s") },
+                       [["-disposition:s", "-default"], ["-disposition:s:1", "+default"]])
     }
 
     func testSubtitleDefaultLanguageMissingClearsOnly() {
@@ -99,7 +151,131 @@ final class ArgumentBuilderTests: XCTestCase {
         s.subtitleDefault = .none
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
                                          source: multiTrack)
-        XCTAssertEqual(args[0].suffix(3), ["-disposition:s", "0", "/out.mkv"])
+        XCTAssertEqual(pairs(args[0]).filter { $0[0].hasPrefix("-disposition:s") },
+                       [["-disposition:s", "-default"]])
+    }
+
+    func testSubtitleDefaultMatchesBibliographicAndTerminologyCodes() {
+        // ISO 639-2 gives German two codes (ger/deu) and French two (fre/fra); MP4 and many
+        // encoders write the terminology form while the picker offers the bibliographic one.
+        let source = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac",
+                               subtitleLanguages: ["DEU", "eng", "fra"])
+        func indexFlagged(for code: String) -> [String]? {
+            var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
+            s.preserveAllStreams = true
+            s.subtitleDefault = .language(code)
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: source)[0]
+            return pairs(args).first { $0[0].hasPrefix("-disposition:s:") }
+        }
+        XCTAssertEqual(indexFlagged(for: "ger"), ["-disposition:s:0", "+default"])
+        XCTAssertEqual(indexFlagged(for: "fre"), ["-disposition:s:2", "+default"])
+        XCTAssertEqual(indexFlagged(for: "eng"), ["-disposition:s:1", "+default"])
+        XCTAssertNil(indexFlagged(for: "spa"), "no track in that language: only the clearing runs")
+    }
+
+    func testCanonicalLanguageMapsTerminologyToBibliographicOnly() {
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("deu"), "ger")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("FRA"), "fre")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("zho"), "chi")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("ger"), "ger")
+        // Most languages have a single code and must pass through (lowercased).
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("ENG"), "eng")
+        XCTAssertEqual(SubtitleDefault.canonicalLanguage("jpn"), "jpn")
+    }
+
+    func testCanonicalLanguageCoversEveryBibliographicTerminologyPair() {
+        // The 20 ISO 639-2 languages that have two codes (Library of Congress table), written
+        // out independently of the implementation's own dictionary.
+        let pairs: [(bibliographic: String, terminology: String)] = [
+            ("alb", "sqi"), ("arm", "hye"), ("baq", "eus"), ("bur", "mya"), ("chi", "zho"),
+            ("cze", "ces"), ("dut", "nld"), ("fre", "fra"), ("geo", "kat"), ("ger", "deu"),
+            ("gre", "ell"), ("ice", "isl"), ("mac", "mkd"), ("mao", "mri"), ("may", "msa"),
+            ("per", "fas"), ("rum", "ron"), ("slo", "slk"), ("tib", "bod"), ("wel", "cym"),
+        ]
+        XCTAssertEqual(pairs.count, 20)
+        for (b, t) in pairs {
+            XCTAssertEqual(SubtitleDefault.canonicalLanguage(t), b, "\(t) -> \(b)")
+            XCTAssertEqual(SubtitleDefault.canonicalLanguage(b), b, "\(b) stays")
+            XCTAssertEqual(SubtitleDefault.canonicalLanguage(t.uppercased()), b, "case-insensitive")
+        }
+    }
+
+    func testAudioBitrateIsLoweredToTheCeilingOfTheFilesRealLayout() {
+        // "Same as source" leaves the layout to the file; libopus takes 256 kbps per channel.
+        var s = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 20,
+                                   audioBitrate: .kbps(512))
+        func bitrate(_ args: [String]) -> String? { pairs(args).first { $0[0] == "-b:a" || $0[0] == "-b:a:0" }?[1] }
+        func build(channels: Int?) -> [String] {
+            let source = MediaInfo(durationSeconds: 10, audioCodecName: "aac", audioChannels: channels)
+            return ArgumentBuilder.build(settings: s, input: "/in.m4a", output: "/out.mkv", source: source)[0]
+        }
+        XCTAssertEqual(bitrate(build(channels: 1)), "256k", "mono source")
+        XCTAssertEqual(bitrate(build(channels: 2)), "512k", "stereo source: unchanged")
+        XCTAssertEqual(bitrate(build(channels: 6)), "512k", "never raised")
+        XCTAssertEqual(bitrate(build(channels: nil)), "512k", "unknown count assumes stereo")
+        // An explicit layout wins over the source's count.
+        s.channels = .mono
+        XCTAssertEqual(bitrate(build(channels: 6)), "256k")
+        // The same applies when every stream is kept (the audio options are stream-qualified).
+        s.channels = .source
+        s.preserveAllStreams = true
+        s.container = .mkv
+        s.videoCodec = .copy
+        XCTAssertEqual(bitrate(build(channels: 1)), "256k")
+        // Auto adds no `-b:a` at all.
+        s.audioBitrate = .auto
+        XCTAssertNil(bitrate(build(channels: 1)))
+    }
+
+    func testOnlyOpusRequestsAreLoweredPerFile() {
+        // Only libopus refuses a bitrate. mp3 and ac3 clamp inside ffmpeg and aac takes what it is
+        // given (a 96 kHz stereo file honours 768+), so the builder must not lower those: it would
+        // throw away a rate the encoder delivers.
+        func bitrate(_ codec: AudioCodec, _ container: Container, kbps: Int, channels: Int) -> String? {
+            let s = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 20,
+                                       audioBitrate: .kbps(kbps))
+            let source = MediaInfo(durationSeconds: 10, audioCodecName: "pcm_s16le", audioChannels: channels)
+            let args = ArgumentBuilder.build(settings: s, input: "/in.wav", output: "/out", source: source)[0]
+            return pairs(args).first { $0[0] == "-b:a" }?[1]
+        }
+        XCTAssertEqual(bitrate(.aac, .m4a, kbps: 1536, channels: 1), "1536k")
+        XCTAssertEqual(bitrate(.aac, .m4a, kbps: 768, channels: 2), "768k")
+        XCTAssertEqual(bitrate(.mp3, .mp3, kbps: 640, channels: 1), "640k")
+        XCTAssertEqual(bitrate(.ac3, .m4a, kbps: 768, channels: 2), "768k")
+        XCTAssertEqual(bitrate(.eac3, .mkv, kbps: 1536, channels: 1), "1536k")
+        XCTAssertEqual(bitrate(.opus, .mkv, kbps: 1536, channels: 1), "256k")
+    }
+
+    func testBitrateCeilingUsesTheAudioStreamThatIsActuallyEncoded() {
+        // Several audio streams: with nothing mapped ffmpeg encodes the one it selects (default
+        // flag, else most channels); with every stream kept, `-c:a:0` encodes the first.
+        var s = ConversionSettings(container: .mkv, videoCodec: .none, audioCodec: .opus, crf: 20,
+                                   audioBitrate: .kbps(512))
+        func bitrate() -> String? {
+            // A mono first track and a 5.1 selected one.
+            let source = MediaInfo(durationSeconds: 10, audioCodecName: "aac", audioChannels: 6, firstAudioChannels: 1)
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: source)[0]
+            return pairs(args).first { $0[0] == "-b:a" || $0[0] == "-b:a:0" }?[1]
+        }
+        XCTAssertEqual(bitrate(), "512k", "ffmpeg encodes the 5.1 stream, which takes 512")
+        s.preserveAllStreams = true
+        XCTAssertEqual(bitrate(), "256k", "every stream kept: -c:a:0 encodes the mono first stream")
+    }
+
+    func testTwoPassMapsVideoInPassOneOnlyWhenKeepingAllStreams() {
+        // Each encoder opens its stats file by output index, so pass 1 has to map the video
+        // like pass 2 does or a source with several real video streams has no log for the rest.
+        var s = ConversionSettings(container: .mkv, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.rateControl = .bitrate
+        s.videoBitrateKbps = 2500
+        let off = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                        source: multiTrack, passLog: "/tmp/log")
+        XCTAssertFalse(off[0].contains("-map"), "default behaviour stays byte-identical")
+        s.preserveAllStreams = true
+        let on = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
+                                       source: multiTrack, passLog: "/tmp/log")
+        XCTAssertEqual(maps(on[0]), ["0:V?"])
+        XCTAssertEqual(maps(on[0]).first, maps(on[1]).first, "both passes map the video the same way")
     }
 
     func testPreserveAllStreamsDropsSubsForAudioOnlyContainer() {
@@ -108,7 +284,7 @@ final class ArgumentBuilderTests: XCTestCase {
         s.subtitleDefault = .language("eng")
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.m4a",
                                          source: multiTrack)
-        XCTAssertTrue(args[0].contains("-sn"))
+        XCTAssertEqual(maps(args[0]), ["0:a"], "subtitles are never mapped into an audio-only file")
         XCTAssertFalse(args[0].contains("-c:s"))
         XCTAssertFalse(args[0].contains("-disposition:s"))
     }
@@ -306,5 +482,116 @@ final class ArgumentBuilderTests: XCTestCase {
             "-c:a", "aac",
             "-movflags", "+faststart", "/out.mp4"
         ]])
+    }
+
+    // MARK: - HDR tone mapping
+
+    let hdrSrc = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac",
+                           colorTransfer: "smpte2084")
+
+    func testToneMapOffIsByteIdentical() {
+        // Regression guard: with the toggle off nothing about the command changes,
+        // even for an HDR source — tone mapping is opt-in per settings, not per file.
+        let s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
+                                   useHardware: true)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)
+        XCTAssertEqual(args, [[
+            "-hide_banner", "-y", "-i", "/in.mov",
+            "-c:v", "hevc_videotoolbox", "-q:v", "50", "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+            "-c:a", "aac",
+            "-movflags", "+faststart", "/out.mp4"
+        ]])
+    }
+
+    func testToneMapUsesHardwareDecodeOnlyWhereASoftwareFallbackExists() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.toneMapHDR = true
+        func args(for codec: String) -> [String] {
+            let source = MediaInfo(durationSeconds: 10, videoCodecName: codec, audioCodecName: "aac",
+                                   colorTransfer: "smpte2084")
+            return ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: source)[0]
+        }
+        // Cuts wall time and CPU by a quarter to a half with a software encoder.
+        for codec in ["hevc", "h264"] {
+            XCTAssertTrue(pairs(args(for: codec)).contains(["-hwaccel", "videotoolbox"]), codec)
+        }
+        // `-hwaccel` makes ffmpeg pick its hardware-only AV1 decoder, which fails outright
+        // on Macs without AV1 decode hardware instead of falling back to libdav1d.
+        for codec in ["av1", "vp9", "prores", "mpeg2video"] {
+            XCTAssertFalse(args(for: codec).contains("-hwaccel"), codec)
+            XCTAssertTrue(args(for: codec).contains("-init_hw_device"), "\(codec) still needs the device for scale_vt")
+        }
+    }
+
+    func testToneMapKeepsHvc1TagAndFaststartForHEVCInMP4() {
+        // Without `hvc1` HEVC in MP4 is tagged `hev1`, which QuickTime and iOS will not play.
+        for hardware in [false, true] {
+            var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
+                                       useHardware: hardware)
+            s.toneMapHDR = true
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
+            XCTAssertTrue(pairs(args).contains(["-tag:v", "hvc1"]), "hardware=\(hardware)")
+            XCTAssertTrue(pairs(args).contains(["-movflags", "+faststart"]), "hardware=\(hardware)")
+        }
+    }
+
+    func testToneMapSoftwareEncodeKeepsPixFmtAndProfile() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.toneMapHDR = true
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
+        XCTAssertTrue(args.contains("-init_hw_device"))
+        XCTAssertTrue(args.contains("-vf"))
+        // The existing 8-bit + High-profile handling must survive the filter insertion.
+        XCTAssertTrue(args.contains("yuv420p"))
+        XCTAssertTrue(args.contains("high"))
+        XCTAssertTrue(args.contains("-color_trc"))
+    }
+
+    func testToneMapTwoPassAppliesFilterToBothPasses() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.toneMapHDR = true
+        s.rateControl = .bitrate
+        s.videoBitrateKbps = 2500
+        let cmds = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4",
+                                         source: hdrSrc, passLog: "/tmp/log")
+        XCTAssertEqual(cmds.count, 2)
+        for pass in cmds {
+            XCTAssertTrue(pass.contains("-init_hw_device"))
+            XCTAssertTrue(pass.contains("-vf"))
+        }
+    }
+
+    func testToneMapSkippedForSDRSource() {
+        // The toggle covers the whole batch: an SDR file must get exactly the command
+        // it gets with the toggle off, not the HDR graph.
+        let sdr = MediaInfo(durationSeconds: 10, videoCodecName: "h264", audioCodecName: "aac",
+                            colorTransfer: "bt709")
+        let off = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
+                                     useHardware: true)
+        var on = off
+        on.toneMapHDR = true
+        for source in [sdr, MediaInfo(durationSeconds: 10, videoCodecName: "h264", audioCodecName: "aac")] {
+            XCTAssertEqual(
+                ArgumentBuilder.build(settings: on, input: "/in.mov", output: "/out.mp4", source: source),
+                ArgumentBuilder.build(settings: off, input: "/in.mov", output: "/out.mp4", source: source))
+        }
+    }
+
+    func testToneMapIgnoredForCopyAndNone() {
+        for codec in [VideoCodec.copy, .none] {
+            var s = ConversionSettings(container: .mkv, videoCodec: codec, audioCodec: .aac, crf: 20)
+            s.toneMapHDR = true
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv", source: hdrSrc)[0]
+            XCTAssertFalse(args.contains("-init_hw_device"), "\(codec) has no encoder to tone map into")
+            XCTAssertFalse(args.contains("-vf"))
+            XCTAssertFalse(args.contains("-color_trc"))
+        }
+    }
+
+    func testToneMapIgnoredForGIF() {
+        var s = ConversionSettings(container: .gif, videoCodec: .h264, audioCodec: .none, crf: 20)
+        s.toneMapHDR = true
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.gif", source: hdrSrc)
+        XCTAssertEqual(args, [["-hide_banner", "-y", "-i", "/in.mov", "-an", "/out.gif"]])
     }
 }
