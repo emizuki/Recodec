@@ -41,12 +41,14 @@ final class ArgumentBuilderTests: XCTestCase {
             let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out", source: multiTrack)
             return maps(args[0])
         }
+        // Video maps are optional (`?`): an audio-only source has no video stream, and a
+        // required map would abort the run for it.
         // Re-encode: `0:V` leaves cover art out instead of encoding it as a second video track.
-        XCTAssertEqual(mapped(.mp4, .h264), ["0:V", "0:a?", "0:s?"])
+        XCTAssertEqual(mapped(.mp4, .h264), ["0:V?", "0:a?", "0:s?"])
         // Video copy: `0:v` so an attached picture is carried through untouched.
-        XCTAssertEqual(mapped(.mp4, .copy), ["0:v", "0:a?", "0:s?"])
+        XCTAssertEqual(mapped(.mp4, .copy), ["0:v?", "0:a?", "0:s?"])
         // Only Matroska stores attachments.
-        XCTAssertEqual(mapped(.mkv, .copy), ["0:v", "0:a?", "0:s?", "0:t?"])
+        XCTAssertEqual(mapped(.mkv, .copy), ["0:v?", "0:a?", "0:s?", "0:t?"])
         // No video encoder, nothing to map for it.
         XCTAssertEqual(mapped(.mp4, .none), ["0:a?", "0:s?"])
         // MP3/FLAC/WAV muxers hold exactly one audio stream, M4A any number.
@@ -66,7 +68,7 @@ final class ArgumentBuilderTests: XCTestCase {
         let cmds = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mp4",
                                          source: multiTrack, passLog: "/tmp/log")
         XCTAssertEqual(cmds.count, 2)
-        XCTAssertEqual(maps(cmds[1]).first, "0:V")
+        XCTAssertEqual(maps(cmds[1]).first, "0:V?")
     }
 
     func testPreserveAllStreamsTranscodesOnlyFirstAudioTrack() {
@@ -86,6 +88,30 @@ final class ArgumentBuilderTests: XCTestCase {
         let cIdx = args.firstIndex(of: "-c:a")!
         XCTAssertEqual(args[cIdx + 1], "copy")
         XCTAssertLessThan(cIdx, args.firstIndex(of: "-c:a:0")!)
+        // The qualified options must also carry the chosen values, not just exist.
+        XCTAssertEqual(args[args.firstIndex(of: "-b:a:0")! + 1], "1536k")
+        XCTAssertEqual(args[args.firstIndex(of: "-ac:a:0")! + 1], "6")
+    }
+
+    /// Pairs of adjacent arguments, for asserting a flag is followed by its value.
+    private func pairs(_ args: [String]) -> [[String]] {
+        zip(args, args.dropFirst()).map { [$0, $1] }
+    }
+
+    func testPreserveAllStreamsTagsOnlyTheFirstVideoStream() {
+        // A cover picture may follow the video; `-tag:v hvc1` would hit it too and the
+        // MP4 muxer rejects the combination. Off by default: argv stays unchanged.
+        let hevcSource = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac")
+        for video in [VideoCodec.hevc, .copy] {
+            var s = ConversionSettings(container: .mp4, videoCodec: video, audioCodec: .aac, crf: 20)
+            s.preserveAllStreams = true
+            let on = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hevcSource)[0]
+            XCTAssertTrue(pairs(on).contains(["-tag:v:0", "hvc1"]), "\(video)")
+            XCTAssertFalse(on.contains("-tag:v"), "\(video)")
+            s.preserveAllStreams = false
+            let off = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hevcSource)[0]
+            XCTAssertTrue(pairs(off).contains(["-tag:v", "hvc1"]), "\(video)")
+        }
     }
 
     func testPreserveAllStreamsWithCopyAudioIsUnqualified() {
@@ -353,18 +379,36 @@ final class ArgumentBuilderTests: XCTestCase {
         ]])
     }
 
-    func testToneMapDeclaresDeviceBeforeInputAndDoesNotForceHwaccel() {
-        var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
-                                   useHardware: true)
+    func testToneMapUsesHardwareDecodeOnlyWhereASoftwareFallbackExists() {
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
         s.toneMapHDR = true
-        let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
-        let input = args.firstIndex(of: "-i")!
-        // Input options placed after `-i` would silently apply to the output instead.
-        XCTAssertLessThan(args.firstIndex(of: "-init_hw_device")!, input)
-        XCTAssertLessThan(args.firstIndex(of: "-filter_hw_device")!, input)
+        func args(for codec: String) -> [String] {
+            let source = MediaInfo(durationSeconds: 10, videoCodecName: codec, audioCodecName: "aac",
+                                   colorTransfer: "smpte2084")
+            return ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: source)[0]
+        }
+        // Cuts wall time and CPU by a quarter to a half with a software encoder.
+        for codec in ["hevc", "h264"] {
+            XCTAssertTrue(pairs(args(for: codec)).contains(["-hwaccel", "videotoolbox"]), codec)
+        }
         // `-hwaccel` makes ffmpeg pick its hardware-only AV1 decoder, which fails outright
         // on Macs without AV1 decode hardware instead of falling back to libdav1d.
-        XCTAssertFalse(args.contains("-hwaccel"))
+        for codec in ["av1", "vp9", "prores", "mpeg2video"] {
+            XCTAssertFalse(args(for: codec).contains("-hwaccel"), codec)
+            XCTAssertTrue(args(for: codec).contains("-init_hw_device"), "\(codec) still needs the device for scale_vt")
+        }
+    }
+
+    func testToneMapKeepsHvc1TagAndFaststartForHEVCInMP4() {
+        // Without `hvc1` HEVC in MP4 is tagged `hev1`, which QuickTime and iOS will not play.
+        for hardware in [false, true] {
+            var s = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 25,
+                                       useHardware: hardware)
+            s.toneMapHDR = true
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mov", output: "/out.mp4", source: hdrSrc)[0]
+            XCTAssertTrue(pairs(args).contains(["-tag:v", "hvc1"]), "hardware=\(hardware)")
+            XCTAssertTrue(pairs(args).contains(["-movflags", "+faststart"]), "hardware=\(hardware)")
+        }
     }
 
     func testToneMapSoftwareEncodeKeepsPixFmtAndProfile() {

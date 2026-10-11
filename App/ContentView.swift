@@ -234,8 +234,8 @@ struct ContentView: View {
             GridRow {
                 Text("Streams")
                 Toggle("Keep all tracks", isOn: $viewModel.settings.preserveAllStreams)
-                    .help("Map every stream from the source (all audio, subtitle and "
-                          + "attachment tracks) instead of only the first of each kind. "
+                    .help("Map every audio and subtitle stream from the source (and "
+                          + "attachments, into MKV) instead of only the first of each kind. "
                           + "The target container must be able to hold them.")
             }
             GridRow {

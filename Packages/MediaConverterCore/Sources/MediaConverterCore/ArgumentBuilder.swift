@@ -40,12 +40,19 @@ public enum ArgumentBuilder {
         // toggle is shared by the whole batch, so SDR files must pass untouched.
         let toneMap = s.effectiveToneMapHDR && source.isHDR
         // `scale_vt` runs on a VideoToolbox device declared by `-init_hw_device`.
-        // No `-hwaccel`: it made no measurable difference to speed, and it forces
-        // ffmpeg's hardware-only AV1 decoder, which fails outright on Macs without
-        // AV1 decode hardware instead of falling back to a software decoder.
+        // Hardware decode (`-hwaccel`) is added for H.264 and HEVC only: there it cuts
+        // wall time and CPU by roughly a quarter to a half, and ffmpeg falls back to its
+        // software decoder if the hardware cannot take a profile. For AV1 it would force
+        // the hardware-only decoder, which fails outright on Macs without AV1 decode
+        // hardware, so every other codec is decoded in software.
+        let hwDecodes = source.videoCodecName == "h264" || source.videoCodecName == "hevc"
         let hwInput: [String] = toneMap
             ? ["-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt"]
+                + (hwDecodes ? ["-hwaccel", "videotoolbox"] : [])
             : []
+        // With every stream kept there can be a cover picture besides the video: `hvc1`
+        // must only tag the first video stream, or the MP4 muxer rejects the picture.
+        let tagVideo = s.preserveAllStreams ? "-tag:v:0" : "-tag:v"
         let inputArgs = ["-hide_banner", "-y"] + hwInput + ["-i", input]
 
         // Video encode args (codec + rate control + preset + pix_fmt + profile).
@@ -59,7 +66,7 @@ public enum ArgumentBuilder {
         case .copy:
             videoEncode = ["-c:v", "copy"]
             if source.videoCodecName == "hevc", mp4Family.contains(s.container) {
-                videoTag = ["-tag:v", "hvc1"]
+                videoTag = [tagVideo, "hvc1"]
             }
         case .prores:
             if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
@@ -94,7 +101,7 @@ public enum ArgumentBuilder {
                 videoEncode += ["-profile:v", "high"]
             }
             if s.videoCodec == .hevc, mp4Family.contains(s.container) {
-                videoTag = ["-tag:v", "hvc1"]
+                videoTag = [tagVideo, "hvc1"]
             }
         }
 
@@ -161,7 +168,8 @@ public enum ArgumentBuilder {
                 // `0:V` skips attached pictures: a re-encode would turn cover art into
                 // a second video track. Video copy takes `0:v` so the picture survives.
                 if s.videoCodec != .none {
-                    mapArgs += ["-map", s.videoCodec == .copy ? "0:v" : "0:V"]
+                    // Optional (`?`): an audio-only source has no video stream to map.
+                    mapArgs += ["-map", s.videoCodec == .copy ? "0:v?" : "0:V?"]
                 }
                 mapArgs += ["-map", "0:a?", "-map", "0:s?"]
                 // Only Matroska stores attachments (fonts for styled subtitles).

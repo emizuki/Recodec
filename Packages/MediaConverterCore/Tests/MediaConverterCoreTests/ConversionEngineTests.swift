@@ -121,6 +121,11 @@ final class ConversionEngineTests: XCTestCase {
         if !filters.contains("scale_vt") { throw XCTSkip("ffmpeg has no scale_vt (VideoToolbox) filter") }
     }
 
+    private func requireEncoder(_ tools: FFmpegTools, _ name: String) throws {
+        let encoders = try run(tools.ffmpeg, ["-hide_banner", "-encoders"])
+        if !encoders.contains(name) { throw XCTSkip("ffmpeg has no \(name) encoder to build the fixture") }
+    }
+
     private enum Fixture {
         /// 10-bit HEVC, PQ, BT.2020, with HDR10 mastering display + MaxCLL (iPhone / Screenshots shape).
         case pq10
@@ -130,6 +135,8 @@ final class ConversionEngineTests: XCTestCase {
         case hlg8
         /// 8-bit H.264 with no colour tags.
         case sdr8
+        /// 10-bit AV1, PQ, BT.2020. Macs without AV1 decode hardware can only decode it in software.
+        case pqAV1
         /// 1024×64 PQ luminance ramp, one code per column, stored full or limited range.
         case ramp(fullRange: Bool)
     }
@@ -152,6 +159,9 @@ final class ConversionEngineTests: XCTestCase {
                                "-x264-params", "\(bt2020):transfer=arib-std-b67"]
         case .sdr8:
             args += testsrc + ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+        case .pqAV1:
+            args += testsrc + ["-c:v", "libsvtav1", "-pix_fmt", "yuv420p10le",
+                               "-svtav1-params", "color-primaries=9:transfer-characteristics=16:matrix-coefficients=9"]
         case .ramp(let fullRange):
             let lum = fullRange ? "X" : "64+X/1023*876"
             args += ["-f", "lavfi", "-i",
@@ -236,6 +246,8 @@ final class ConversionEngineTests: XCTestCase {
             // Mastering display / MaxCLL would make players treat the file as HDR again.
             let hdrSideData = sideDataTypes(stream).filter { $0.contains("Mastering") || $0.contains("Content light") }
             XCTAssertTrue(hdrSideData.isEmpty, "\(label): HDR side data survived: \(hdrSideData)")
+            // Without `hvc1` HEVC in MP4 is tagged `hev1`, which QuickTime and iOS will not play.
+            if codec == .hevc { XCTAssertEqual(stream["codec_tag_string"] as? String, "hvc1", label) }
         }
     }
 
@@ -271,6 +283,21 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertNil(result.colorTransfer, "SDR input must not be re-tagged as bt709")
     }
 
+    /// `-hwaccel videotoolbox` forces ffmpeg's hardware-only AV1 decoder: on a Mac without AV1
+    /// decode hardware the whole conversion used to fail instead of decoding in software.
+    func testToneMapsAV1SourceThroughSoftwareDecode() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        try requireToneMapSupport(tools)
+        try requireEncoder(tools, "libsvtav1")
+        let input = try makeFixture(tools, .pqAV1)
+        defer { discard(input) }
+
+        let converted = try await convert(tools, input: input)
+        defer { discard(converted.output) }
+        XCTAssertTrue(converted.source.isHDR, "test clip must be detected as HDR")
+        XCTAssertEqual(try videoStream(tools, converted.output)["color_transfer"] as? String, "bt709")
+    }
+
     /// Regression: with hardware frames ffmpeg could not apply the display-matrix rotation,
     /// so portrait iPhone clips came out landscape. Tone mapping must match the toggle-off result.
     func testToneMapKeepsDisplayRotation() async throws {
@@ -280,8 +307,9 @@ final class ConversionEngineTests: XCTestCase {
         defer { discard(input) }
 
         let off = try await convert(tools, input: input, toneMap: false)
+        defer { discard(off.output) }
         let on = try await convert(tools, input: input, toneMap: true)
-        defer { discard(off.output, on.output) }
+        defer { discard(on.output) }
         let offStream = try videoStream(tools, off.output)
         let onStream = try videoStream(tools, on.output)
         let offSize = [offStream["width"] as? Int, offStream["height"] as? Int]
@@ -299,8 +327,9 @@ final class ConversionEngineTests: XCTestCase {
         defer { discard(limitedIn, fullIn) }
 
         let limited = try await convert(tools, input: limitedIn, crf: 18)
+        defer { discard(limited.output) }
         let full = try await convert(tools, input: fullIn, crf: 18)
-        defer { discard(limited.output, full.output) }
+        defer { discard(full.output) }
 
         for output in [limited.output, full.output] {
             let stream = try videoStream(tools, output)
@@ -325,6 +354,12 @@ final class ConversionEngineTests: XCTestCase {
         case audioFirstMP4
         /// h264, aac + ac3, two srt subtitles, one attachment.
         case multiMKV
+        /// A plain AAC file: no video stream at all.
+        case audioOnlyM4A
+        /// AAC plus an mjpeg cover picture and no real video.
+        case audioWithCoverM4A
+        /// hevc (`hvc1`) + aac + an mjpeg cover picture.
+        case hevcCoverMP4
     }
 
     private func makeLayout(_ tools: FFmpegTools, _ layout: Layout) throws -> URL {
@@ -336,6 +371,12 @@ final class ConversionEngineTests: XCTestCase {
         let video = ["-f", "lavfi", "-i", "testsrc2=size=160x120:rate=15:duration=2"]
         let audio = ["-f", "lavfi", "-i", "sine=frequency=440:duration=2"]
         let x264 = ["-c:v", "libx264", "-preset", "ultrafast"]
+        func makeCover() throws -> URL {
+            let cover = tmp("cover.jpg"); scratch.append(cover)
+            _ = try run(tools.ffmpeg, base + ["-f", "lavfi", "-i", "color=c=red:s=64x64:d=1",
+                                              "-frames:v", "1", "-y", cover.path])
+            return cover
+        }
         let out: URL
         switch layout {
         case .chaptersMP4:
@@ -365,6 +406,22 @@ final class ConversionEngineTests: XCTestCase {
                                                                "-c:v:0", "libx264", "-preset", "ultrafast", "-c:a", "aac",
                                                                "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic",
                                                                "-y", out.path])
+        case .audioOnlyM4A:
+            out = tmp("audio.m4a")
+            _ = try run(tools.ffmpeg, base + audio + ["-c:a", "aac", "-y", out.path])
+        case .audioWithCoverM4A:
+            let cover = try makeCover()
+            out = tmp("audiocover.m4a")
+            _ = try run(tools.ffmpeg, base + audio + ["-i", cover.path, "-map", "0:a", "-map", "1:v", "-c:a", "aac",
+                                                       "-c:v", "mjpeg", "-disposition:v", "attached_pic", "-y", out.path])
+        case .hevcCoverMP4:
+            let cover = try makeCover()
+            out = tmp("hevccover.mp4")
+            _ = try run(tools.ffmpeg, base + video + audio + ["-i", cover.path, "-map", "0:v", "-map", "1:a", "-map", "2:v",
+                                                               "-c:v:0", "libx265", "-preset", "ultrafast",
+                                                               "-x265-params", "log-level=error", "-tag:v:0", "hvc1",
+                                                               "-c:a", "aac", "-c:v:1", "mjpeg",
+                                                               "-disposition:v:1", "attached_pic", "-y", out.path])
         case .audioFirstMP4:
             out = tmp("audiofirst.mp4")
             _ = try run(tools.ffmpeg, base + audio + video + ["-map", "0:a", "-map", "1:v", "-c:a", "aac"] + x264
@@ -492,6 +549,37 @@ final class ConversionEngineTests: XCTestCase {
         defer { discard(output) }
         XCTAssertEqual(try layoutOf(tools, output).kinds,
                        ["video", "audio", "audio", "subtitle", "subtitle", "attachment"])
+    }
+
+    /// Audio files have no video stream. A required video map aborted the run for them as soon
+    /// as the target was a video container (the setting covers the whole batch).
+    func testKeepAllTracksConvertsAudioOnlySourcesIntoVideoContainers() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let plain = try makeLayout(tools, .audioOnlyM4A)
+        let withCover = try makeLayout(tools, .audioWithCoverM4A)
+        defer { discard(plain, withCover) }
+
+        for input in [plain, withCover] {
+            for container in [Container.mp4, .mkv] {
+                let output = try await keepAll(tools, input: input, to: container, video: .h264, audio: .aac)
+                defer { discard(output) }
+                XCTAssertEqual(try layoutOf(tools, output).kinds, ["audio"], "\(input.lastPathComponent) → \(container)")
+            }
+        }
+    }
+
+    /// `-tag:v hvc1` hit the cover picture too, and the MP4 muxer rejects that: an HEVC remux of a
+    /// file with cover art aborted. With video Copy the picture must come through untouched.
+    func testKeepAllTracksHEVCCopyWithCoverArtIntoMP4() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .hevcCoverMP4)
+        defer { discard(input) }
+
+        let output = try await keepAll(tools, input: input, to: .mp4, video: .copy, audio: .aac)
+        defer { discard(output) }
+        let result = try layoutOf(tools, output)
+        XCTAssertEqual(result.pictures, 1)
+        XCTAssertEqual(try videoStream(tools, output)["codec_tag_string"] as? String, "hvc1")
     }
 }
 

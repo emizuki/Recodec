@@ -24,7 +24,7 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **Video:** H.264, HEVC, AV1, VP9, ProRes — or **Copy** (passthrough, no re-encode).
 - **Audio:** AAC, MP3, ALAC, Opus, FLAC, PCM, AC-3, E-AC-3 — or Copy.
 - **Controls:** per-codec quality (CRF), encoder preset, channels (up to 7.1 where the encoder supports it), audio bitrate (up to 1536 kbps), and optional VideoToolbox hardware encoding.
-- **Keep all tracks** (opt-in) — carry every audio, subtitle, and attachment stream through instead of one of each, transcoding only the first audio track.
+- **Keep all tracks** (opt-in) — carry every audio and subtitle stream through (and attachments, into MKV) instead of one of each, transcoding only the first audio track.
 - **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them and tone maps to Rec.709 on VideoToolbox.
 - **Live iPhone-ready badge** that reflects your current settings.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
@@ -44,16 +44,21 @@ either way, wherever the container can hold them.
 
 Two things to know:
 
-- Streams are mapped by kind, so what a container cannot hold is left out rather
-  than aborting the run: data tracks (the timed-metadata tracks on iPhone clips,
-  the text track MP4 uses for chapters — the chapters themselves are kept),
-  cover art when the video is re-encoded (with video **Copy** it is carried
-  through), and attachments outside MKV. MP3, FLAC and WAV hold exactly one audio
-  track, so they get the first; M4A keeps them all. GIF ignores the setting.
+- Streams are mapped by kind, and a few tracks a container cannot hold are left
+  out rather than aborting the run: data tracks (the timed-metadata tracks on
+  iPhone clips, the text track MP4 uses for chapters — the chapters themselves
+  are kept), cover art when the video is re-encoded, and attachments outside
+  MKV. With video **Copy** cover art is passed through: MP4 keeps it as a
+  picture, MKV stores it as a one-frame video track and MOV drops it. Extra
+  audio tracks are copied as they are, so one the container cannot hold (an
+  AC-3 track into WebM) still aborts the run. MP3, FLAC and WAV hold exactly
+  one audio track, so they get the first; M4A keeps them all. GIF ignores the
+  setting.
 - Subtitles are copied, not converted, so the container has to accept the codec.
-  MP4, MOV and M4V take `mov_text` but not SubRip or Blu-ray bitmap subtitles
-  (PGS/VobSub); MKV takes SubRip but not `mov_text`; WebM takes neither. A
-  mismatch aborts the run — use MKV for disc remuxes.
+  MP4, MOV and M4V take `mov_text` but not SubRip; MKV takes SubRip but not
+  `mov_text`; WebM takes neither. Of the disc bitmap formats, PGS is rejected
+  by MP4, MOV and M4V, and VobSub by MOV and M4V (MP4 takes it). A mismatch
+  aborts the run — use MKV for disc remuxes.
 - **Default subtitle** sets which subtitle track a player selects on its own. It
   needs *Keep all tracks*, because without mapping there is at most one subtitle
   track to flag. Picking a language resets the flags on every subtitle stream
@@ -100,8 +105,9 @@ pixels get interpreted as Rec.709 and the picture goes flat and grey.
 Recodec reads the video stream's transfer function when a file is loaded. If it
 is PQ or HLG the **HDR → Tone map to SDR** toggle switches itself on, and the
 conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
-on VideoToolbox before encoding: ffmpeg decodes the frames, then uploads them to
-the GPU for the mapping step. The output is tagged Rec.709
+on VideoToolbox before encoding: H.264 and HEVC are decoded in hardware, other
+codecs by ffmpeg, and the frames are then uploaded to the GPU for the mapping
+step. The output is tagged Rec.709
 throughout and the HDR mastering / content light level metadata is stripped,
 so players do not re-flag it as HDR.
 
