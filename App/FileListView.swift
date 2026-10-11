@@ -11,7 +11,7 @@ struct FileListView: View {
 
     private static let rowHeight: CGFloat = 52
     /// Half a row stays visible past the cap, so a long list visibly scrolls.
-    private static let maxVisibleRows: CGFloat = 4.5
+    private static let maxVisibleRows: CGFloat = 5.5
     private static let emptyHeight: CGFloat = 120
 
     var body: some View {
