@@ -6,7 +6,7 @@
 
 **A simple, native macOS media converter — right-click to convert video and audio into iPhone-friendly formats, powered by ffmpeg.**
 
-<img src="docs/screenshot.png" width="760" alt="Recodec converting a mix of video and audio files">
+<img src="docs/screenshot.png" width="760" alt="Recodec with a mixed batch: per-file iPhone-ready verdicts and an HDR clip marked for tone mapping">
 
 </div>
 
@@ -24,9 +24,9 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **Video:** H.264, HEVC, AV1, VP9, ProRes — or **Copy** (passthrough, no re-encode).
 - **Audio:** AAC, MP3, ALAC, Opus, FLAC, PCM, AC-3, E-AC-3 — or Copy.
 - **Controls:** per-codec quality (CRF), encoder preset, channels (up to 7.1 where the encoder supports it), audio bitrate (up to 1536 kbps), and optional VideoToolbox hardware encoding.
-- **Keep all tracks** (opt-in) — carry every audio and subtitle stream through (and attachments, into MKV) instead of one of each, transcoding only the first audio track.
-- **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them and tone maps to Rec.709 on VideoToolbox.
-- **Live iPhone-ready badge** that reflects your current settings.
+- **Keep all tracks** (opt-in, under **More options**) — carry every audio and subtitle stream through (and attachments, into MKV) instead of one of each, transcoding only the first audio track.
+- **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them, marks them with an **HDR → SDR** chip in the file list, and tone maps to Rec.709 on VideoToolbox.
+- **Live iPhone-ready verdict, per file** — each row says whether that file comes out iPhone-ready under your current settings (and why not), and the footer counts them ("2 of 4 iPhone-ready"). With **Copy** the answer depends on the source, so a batch can mix both.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
 
 ## Multi-track sources
@@ -36,8 +36,8 @@ audio, and one subtitle track** — ffmpeg's standard stream selection. For a
 single-track source that is exactly right, and it stays the default so existing
 conversions produce byte-identical output.
 
-A disc remux is usually not a single-track source. Turn on **Streams → Keep all
-tracks** and Recodec maps every video, audio and subtitle stream from the input
+A disc remux is usually not a single-track source. Open **More options** and turn on
+**Keep all tracks** and Recodec maps every video, audio and subtitle stream from the input
 instead (plus attachments such as fonts, into MKV), copying subtitles through
 untouched (they are re-muxed, never re-encoded). Chapters are carried through
 either way, wherever the container can hold them.
@@ -118,7 +118,7 @@ is re-encoded without care — or just viewed on an SDR screen — the BT.2020
 pixels get interpreted as Rec.709 and the picture goes flat and grey.
 
 Recodec reads the video stream's transfer function when a file is loaded. If it
-is PQ or HLG the **HDR → Tone map to SDR** toggle switches itself on, and the
+is PQ or HLG the **Tone map HDR to SDR** toggle (Video column) switches itself on, and the
 conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
 on VideoToolbox before encoding: H.264 and HEVC are decoded in hardware, other
 codecs by ffmpeg, and the frames are then uploaded to the GPU for the mapping
@@ -128,7 +128,8 @@ so players do not re-flag it as HDR.
 
 Notes:
 
-- Tone mapping needs the video re-encoded; it is greyed out for video **Copy**.
+- Tone mapping needs the video re-encoded; with video **Copy** the Video column says
+  so and the toggle is not shown.
 - The toggle switches itself *on* when the list goes from having no HDR file to
   having one, and is never switched off automatically, so a manual choice
   survives adding more files to the batch.
