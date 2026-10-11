@@ -27,19 +27,46 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertFalse(args[0].contains("-disposition:s"))
     }
 
-    func testPreserveAllStreamsMapsEverythingAndCopiesSubs() {
-        var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3,
-                                   crf: 20, channels: .surround51, audioBitrate: .kbps(1536))
+    /// Values of every `-map` in an argv, in order.
+    private func maps(_ args: [String]) -> [String] {
+        args.indices.dropLast().filter { args[$0] == "-map" }.map { args[$0 + 1] }
+    }
+
+    func testPreserveAllStreamsMapsByKindNeverEverything() {
+        // A blanket `-map 0` also maps data streams (iPhone `mebx`, MP4 chapter text
+        // tracks), attachments and cover art, which most muxers reject.
+        func mapped(_ container: Container, _ video: VideoCodec, audio: AudioCodec = .aac) -> [String] {
+            var s = ConversionSettings(container: container, videoCodec: video, audioCodec: audio, crf: 20)
+            s.preserveAllStreams = true
+            let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out", source: multiTrack)
+            return maps(args[0])
+        }
+        // Re-encode: `0:V` leaves cover art out instead of encoding it as a second video track.
+        XCTAssertEqual(mapped(.mp4, .h264), ["0:V", "0:a?", "0:s?"])
+        // Video copy: `0:v` so an attached picture is carried through untouched.
+        XCTAssertEqual(mapped(.mp4, .copy), ["0:v", "0:a?", "0:s?"])
+        // Only Matroska stores attachments.
+        XCTAssertEqual(mapped(.mkv, .copy), ["0:v", "0:a?", "0:s?", "0:t?"])
+        // No video encoder, nothing to map for it.
+        XCTAssertEqual(mapped(.mp4, .none), ["0:a?", "0:s?"])
+        // MP3/FLAC/WAV muxers hold exactly one audio stream, M4A any number.
+        XCTAssertEqual(mapped(.mp3, .none, audio: .mp3), ["0:a:0"])
+        XCTAssertEqual(mapped(.flac, .none, audio: .flac), ["0:a:0"])
+        XCTAssertEqual(mapped(.wav, .none, audio: .pcm), ["0:a:0"])
+        XCTAssertEqual(mapped(.m4a, .none), ["0:a"])
+    }
+
+    func testPreserveAllStreamsMapsVideoFirstSoTwoPassStatsLineUp() {
+        // Pass 1 (default selection) writes `<log>-0.log` for the video. Pass 2 opens the
+        // log by output stream index, so the video must be output stream 0 here too.
+        var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
+        s.rateControl = .bitrate
+        s.videoBitrateKbps = 2500
         s.preserveAllStreams = true
-        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mkv",
-                                         source: multiTrack)
-        XCTAssertEqual(args, [[
-            "-hide_banner", "-y", "-i", "/in.mkv",
-            "-c:v", "copy",
-            "-c:a", "copy", "-c:a:0", "eac3", "-b:a:0", "1536k", "-ac:a:0", "6",
-            "-map", "0", "-c:s", "copy",
-            "/out.mkv"
-        ]])
+        let cmds = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.mp4",
+                                         source: multiTrack, passLog: "/tmp/log")
+        XCTAssertEqual(cmds.count, 2)
+        XCTAssertEqual(maps(cmds[1]).first, "0:V")
     }
 
     func testPreserveAllStreamsTranscodesOnlyFirstAudioTrack() {
@@ -79,8 +106,7 @@ final class ArgumentBuilderTests: XCTestCase {
                                          source: multiTrack)
         // "eng" is the 2nd subtitle stream -> index 1, not its absolute stream index.
         XCTAssertEqual(args[0].suffix(7),
-                       ["-map", "0", "-c:s", "copy",
-                        "-disposition:s", "0", "-disposition:s:1", "default", "/out.mkv"].suffix(7))
+                       ["-c:s", "copy", "-disposition:s", "0", "-disposition:s:1", "default", "/out.mkv"])
     }
 
     func testSubtitleDefaultLanguageMissingClearsOnly() {
@@ -108,7 +134,7 @@ final class ArgumentBuilderTests: XCTestCase {
         s.subtitleDefault = .language("eng")
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.m4a",
                                          source: multiTrack)
-        XCTAssertTrue(args[0].contains("-sn"))
+        XCTAssertEqual(maps(args[0]), ["0:a"], "subtitles are never mapped into an audio-only file")
         XCTAssertFalse(args[0].contains("-c:s"))
         XCTAssertFalse(args[0].contains("-disposition:s"))
     }

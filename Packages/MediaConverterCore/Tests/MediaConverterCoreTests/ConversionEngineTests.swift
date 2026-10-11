@@ -313,6 +313,186 @@ final class ConversionEngineTests: XCTestCase {
             XCTAssertEqual(a, b, accuracy: 3, "column \(x): limited-range twin \(a) vs full-range source \(b)")
         }
     }
+
+    // MARK: - Keep all tracks (real ffmpeg)
+
+    private enum Layout {
+        /// h264 + aac with two chapters. MP4 stores them so they read back as an extra `bin_data` track.
+        case chaptersMP4
+        /// h264 + aac + an mjpeg cover picture (attached_pic).
+        case coverMP4
+        /// aac first, h264 second.
+        case audioFirstMP4
+        /// h264, aac + ac3, two srt subtitles, one attachment.
+        case multiMKV
+    }
+
+    private func makeLayout(_ tools: FFmpegTools, _ layout: Layout) throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        func tmp(_ name: String) -> URL { dir.appendingPathComponent("ka-\(UUID().uuidString)-\(name)") }
+        var scratch: [URL] = []
+        defer { scratch.forEach { discard($0) } }
+        let base = ["-hide_banner", "-loglevel", "error"]
+        let video = ["-f", "lavfi", "-i", "testsrc2=size=160x120:rate=15:duration=2"]
+        let audio = ["-f", "lavfi", "-i", "sine=frequency=440:duration=2"]
+        let x264 = ["-c:v", "libx264", "-preset", "ultrafast"]
+        let out: URL
+        switch layout {
+        case .chaptersMP4:
+            let meta = tmp("chapters.ffmeta"); scratch.append(meta)
+            try """
+            ;FFMETADATA1
+            [CHAPTER]
+            TIMEBASE=1/1000
+            START=0
+            END=1000
+            title=One
+            [CHAPTER]
+            TIMEBASE=1/1000
+            START=1000
+            END=2000
+            title=Two
+            """.write(to: meta, atomically: true, encoding: .utf8)
+            out = tmp("chapters.mp4")
+            _ = try run(tools.ffmpeg, base + video + audio + ["-i", meta.path, "-map", "0:v", "-map", "1:a",
+                                                               "-map_metadata", "2"] + x264 + ["-c:a", "aac", "-y", out.path])
+        case .coverMP4:
+            let cover = tmp("cover.jpg"); scratch.append(cover)
+            _ = try run(tools.ffmpeg, base + ["-f", "lavfi", "-i", "color=c=red:s=64x64:d=1",
+                                              "-frames:v", "1", "-y", cover.path])
+            out = tmp("cover.mp4")
+            _ = try run(tools.ffmpeg, base + video + audio + ["-i", cover.path, "-map", "0:v", "-map", "1:a", "-map", "2:v",
+                                                               "-c:v:0", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                                                               "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic",
+                                                               "-y", out.path])
+        case .audioFirstMP4:
+            out = tmp("audiofirst.mp4")
+            _ = try run(tools.ffmpeg, base + audio + video + ["-map", "0:a", "-map", "1:v", "-c:a", "aac"] + x264
+                                                              + ["-y", out.path])
+        case .multiMKV:
+            let ger = tmp("ger.srt"), eng = tmp("eng.srt"), font = tmp("font.ttf"); scratch += [ger, eng, font]
+            try "1\n00:00:00,000 --> 00:00:01,000\nHallo\n".write(to: ger, atomically: true, encoding: .utf8)
+            try "1\n00:00:00,000 --> 00:00:01,000\nHello\n".write(to: eng, atomically: true, encoding: .utf8)
+            try "not really a font".write(to: font, atomically: true, encoding: .utf8)
+            out = tmp("multi.mkv")
+            _ = try run(tools.ffmpeg, base + video + audio + ["-f", "lavfi", "-i", "sine=frequency=880:duration=2",
+                                                               "-i", ger.path, "-i", eng.path,
+                                                               "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3", "-map", "4"]
+                                      + x264 + ["-c:a:0", "aac", "-c:a:1", "ac3", "-c:s", "srt",
+                                                "-metadata:s:s:0", "language=ger", "-metadata:s:s:1", "language=eng",
+                                                "-attach", font.path,
+                                                "-metadata:s:t", "mimetype=application/x-truetype-font",
+                                                "-metadata:s:t", "filename=font.ttf", "-y", out.path])
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "could not generate the \(layout) fixture")
+        return out
+    }
+
+    /// Stream kinds in output order, attached-picture count and chapter count, from ffprobe.
+    private func layoutOf(_ tools: FFmpegTools, _ url: URL) throws -> (kinds: [String], pictures: Int, chapters: Int) {
+        let json = try run(tools.ffprobe, ["-v", "error", "-show_streams", "-show_chapters", "-of", "json", url.path])
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let streams = root["streams"] as? [[String: Any]] ?? []
+        let pictures = streams.filter { (($0["disposition"] as? [String: Any])?["attached_pic"] as? Int) == 1 }.count
+        return (streams.compactMap { $0["codec_type"] as? String }, pictures, (root["chapters"] as? [Any])?.count ?? 0)
+    }
+
+    private func keepAll(_ tools: FFmpegTools, input: URL, to container: Container, video: VideoCodec,
+                         audio: AudioCodec, bitrate: Bool = false) async throws -> URL {
+        let output = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ka-out-\(UUID().uuidString).\(container.fileExtension)")
+        let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+        var settings = ConversionSettings(container: container, videoCodec: video, audioCodec: audio, crf: 32)
+        settings.preset = .ultrafast
+        settings.preserveAllStreams = true
+        if bitrate { settings.rateControl = .bitrate; settings.videoBitrateKbps = 300 }
+        try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+            .convert(input: input, output: output, settings: settings, source: source) { _ in }
+        return output
+    }
+
+    /// The track MP4 writes for chapters is a data stream Matroska and QuickTime refuse
+    /// (as are iPhone `mebx` metadata tracks); a blanket `-map 0` aborted the whole run.
+    func testKeepAllTracksDropsDataStreamsButKeepsChapters() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .chaptersMP4)
+        defer { discard(input) }
+
+        for container in [Container.mkv, .mov, .mp4] {
+            let output = try await keepAll(tools, input: input, to: container, video: .h264, audio: .aac)
+            defer { discard(output) }
+            let result = try layoutOf(tools, output)
+            XCTAssertEqual(Array(result.kinds.prefix(2)), ["video", "audio"], "\(container)")
+            XCTAssertEqual(result.chapters, 2, "\(container): chapters belong to the container, not the dropped track")
+        }
+    }
+
+    /// Re-encoding with `-map 0` encoded the cover picture as a second video track (MKV/WebM) or
+    /// aborted the muxer (MP4/MOV/M4V).
+    func testKeepAllTracksReencodeDoesNotTurnCoverArtIntoAVideoTrack() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .coverMP4)
+        defer { discard(input) }
+
+        for container in [Container.mp4, .mkv] {
+            let output = try await keepAll(tools, input: input, to: container, video: .h264, audio: .aac)
+            defer { discard(output) }
+            let result = try layoutOf(tools, output)
+            XCTAssertEqual(result.kinds, ["video", "audio"], "\(container)")
+            XCTAssertEqual(result.pictures, 0, "\(container)")
+        }
+    }
+
+    func testKeepAllTracksVideoCopyCarriesCoverArtThrough() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .coverMP4)
+        defer { discard(input) }
+
+        let output = try await keepAll(tools, input: input, to: .mp4, video: .copy, audio: .aac)
+        defer { discard(output) }
+        let result = try layoutOf(tools, output)
+        XCTAssertEqual(result.kinds.filter { $0 == "video" }.count, 2)
+        XCTAssertEqual(result.pictures, 1, "nothing is re-encoded, so the picture can stay")
+    }
+
+    /// MP3, FLAC and WAV muxers accept exactly one audio stream; M4A takes every track.
+    func testKeepAllTracksIntoAudioOnlyTargets() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .multiMKV)
+        defer { discard(input) }
+
+        for (container, audio) in [(Container.mp3, AudioCodec.mp3), (.flac, .flac)] {
+            let output = try await keepAll(tools, input: input, to: container, video: .none, audio: audio)
+            defer { discard(output) }
+            XCTAssertEqual(try layoutOf(tools, output).kinds, ["audio"], "\(container)")
+        }
+        let m4a = try await keepAll(tools, input: input, to: .m4a, video: .none, audio: .aac)
+        defer { discard(m4a) }
+        XCTAssertEqual(try layoutOf(tools, m4a).kinds, ["audio", "audio"])
+    }
+
+    /// Pass 1 writes its stats for output stream 0; with the audio first, pass 2 opened the
+    /// log of the video's real index and could not find it.
+    func testKeepAllTracksTwoPassWithAudioFirstSource() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .audioFirstMP4)
+        defer { discard(input) }
+
+        let output = try await keepAll(tools, input: input, to: .mp4, video: .h264, audio: .aac, bitrate: true)
+        defer { discard(output) }
+        XCTAssertEqual(try layoutOf(tools, output).kinds, ["video", "audio"])
+    }
+
+    func testKeepAllTracksKeepsEverythingMatroskaCanHold() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .multiMKV)
+        defer { discard(input) }
+
+        let output = try await keepAll(tools, input: input, to: .mkv, video: .h264, audio: .aac)
+        defer { discard(output) }
+        XCTAssertEqual(try layoutOf(tools, output).kinds,
+                       ["video", "audio", "audio", "subtitle", "subtitle", "attachment"])
+    }
 }
 
 /// Thread-safe progress recorder (callback fires on a background queue).

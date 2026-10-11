@@ -37,22 +37,29 @@ single-track source that is exactly right, and it stays the default so existing
 conversions produce byte-identical output.
 
 A disc remux is usually not a single-track source. Turn on **Streams → Keep all
-tracks** and Recodec maps every stream from the input instead, copying subtitles
-through untouched (they are re-muxed, never re-encoded). Chapters are preserved
-either way.
+tracks** and Recodec maps every video, audio and subtitle stream from the input
+instead (plus attachments such as fonts, into MKV), copying subtitles through
+untouched (they are re-muxed, never re-encoded). Chapters are carried through
+either way, wherever the container can hold them.
 
 Two things to know:
 
-- The target container has to be able to hold what you map into it. MKV takes
-  essentially anything; MP4 cannot store Blu-ray bitmap subtitles (PGS/VobSub)
-  or SubRip, so *Keep all tracks* into MP4 will abort on a disc remux — use MKV
-  for those. Audio-only targets (M4A, MP3, FLAC, WAV) and GIF drop subtitles
-  automatically rather than failing the run.
+- Streams are mapped by kind, so what a container cannot hold is left out rather
+  than aborting the run: data tracks (the timed-metadata tracks on iPhone clips,
+  the text track MP4 uses for chapters — the chapters themselves are kept),
+  cover art when the video is re-encoded (with video **Copy** it is carried
+  through), and attachments outside MKV. MP3, FLAC and WAV hold exactly one audio
+  track, so they get the first; M4A keeps them all. GIF ignores the setting.
+- Subtitles are copied, not converted, so the container has to accept the codec.
+  MP4, MOV and M4V take `mov_text` but not SubRip or Blu-ray bitmap subtitles
+  (PGS/VobSub); MKV takes SubRip but not `mov_text`; WebM takes neither. A
+  mismatch aborts the run — use MKV for disc remuxes.
 - **Default subtitle** sets which subtitle track a player selects on its own. It
   needs *Keep all tracks*, because without mapping there is at most one subtitle
-  track to flag. Picking a language clears the default flag on every subtitle
-  stream first, then sets it on the first track matching that language — so a
-  source shipping two "default" tracks does not carry the conflict through.
+  track to flag. Picking a language resets the flags on every subtitle stream
+  first (*forced* and the like go with them), then sets *default* on the first
+  track matching that language — so a source shipping two "default" tracks does
+  not carry the conflict through.
   Leave it on *Unchanged* to preserve whatever the source declared.
 
 ### Lossless and HD audio

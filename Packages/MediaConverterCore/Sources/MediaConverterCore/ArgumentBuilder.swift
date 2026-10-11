@@ -148,12 +148,26 @@ public enum ArgumentBuilder {
         // Stream mapping is opt-in. Without it ffmpeg picks one stream of each
         // kind (its default selection), which is the historical behaviour and
         // stays byte-identical when `preserveAllStreams` is off.
+        //
+        // With it on, streams are mapped by kind. A blanket `-map 0` also pulls in
+        // data streams (iPhone `mebx` timed metadata, the text track MP4 uses for
+        // chapters), cover art and attachments, which most muxers reject; and in
+        // 2-pass runs it lets cover art or an audio-first source move the video off
+        // output index 0, where pass 1 wrote its stats file.
         var mapArgs: [String] = []
         var dispositionArgs: [String] = []
         if s.preserveAllStreams {
             if s.container.supportsSubtitles {
+                // `0:V` skips attached pictures: a re-encode would turn cover art into
+                // a second video track. Video copy takes `0:v` so the picture survives.
+                if s.videoCodec != .none {
+                    mapArgs += ["-map", s.videoCodec == .copy ? "0:v" : "0:V"]
+                }
+                mapArgs += ["-map", "0:a?", "-map", "0:s?"]
+                // Only Matroska stores attachments (fonts for styled subtitles).
+                if s.container == .mkv { mapArgs += ["-map", "0:t?"] }
                 // Subtitles are re-muxed, never re-encoded, so copy them through.
-                mapArgs = ["-map", "0", "-c:s", "copy"]
+                mapArgs += ["-c:s", "copy"]
                 switch s.subtitleDefault {
                 case .unchanged:
                     break
@@ -170,9 +184,9 @@ public enum ArgumentBuilder {
                     }
                 }
             } else {
-                // Audio-only/GIF targets cannot carry subtitles; mapping them in
-                // would abort the run, so drop subtitle streams explicitly.
-                mapArgs = ["-map", "0", "-sn"]
+                // Audio-only targets carry no video or subtitles. MP3, FLAC and WAV hold
+                // exactly one audio stream; M4A takes any number.
+                mapArgs = ["-map", s.container == .m4a ? "0:a" : "0:a:0"]
             }
         }
 
