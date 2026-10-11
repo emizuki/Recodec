@@ -227,6 +227,25 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertNil(bitrate(build(channels: 1)))
     }
 
+    func testOnlyOpusRequestsAreLoweredPerFile() {
+        // Only libopus refuses a bitrate. mp3 and ac3 clamp inside ffmpeg and aac takes what it is
+        // given (a 96 kHz stereo file honours 768+), so the builder must not lower those: it would
+        // throw away a rate the encoder delivers.
+        func bitrate(_ codec: AudioCodec, _ container: Container, kbps: Int, channels: Int) -> String? {
+            let s = ConversionSettings(container: container, videoCodec: .none, audioCodec: codec, crf: 20,
+                                       audioBitrate: .kbps(kbps))
+            let source = MediaInfo(durationSeconds: 10, audioCodecName: "pcm_s16le", audioChannels: channels)
+            let args = ArgumentBuilder.build(settings: s, input: "/in.wav", output: "/out", source: source)[0]
+            return pairs(args).first { $0[0] == "-b:a" }?[1]
+        }
+        XCTAssertEqual(bitrate(.aac, .m4a, kbps: 1536, channels: 1), "1536k")
+        XCTAssertEqual(bitrate(.aac, .m4a, kbps: 768, channels: 2), "768k")
+        XCTAssertEqual(bitrate(.mp3, .mp3, kbps: 640, channels: 1), "640k")
+        XCTAssertEqual(bitrate(.ac3, .m4a, kbps: 768, channels: 2), "768k")
+        XCTAssertEqual(bitrate(.eac3, .mkv, kbps: 1536, channels: 1), "1536k")
+        XCTAssertEqual(bitrate(.opus, .mkv, kbps: 1536, channels: 1), "256k")
+    }
+
     func testBitrateCeilingUsesTheAudioStreamThatIsActuallyEncoded() {
         // Several audio streams: with nothing mapped ffmpeg encodes the one it selects (default
         // flag, else most channels); with every stream kept, `-c:a:0` encodes the first.

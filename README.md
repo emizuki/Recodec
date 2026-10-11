@@ -90,12 +90,14 @@ the layout: MP3 stops at 320 kbps and AC-3 at 640 (higher requests are silently
 clamped), E-AC-3 goes up to 1536, Opus takes 256 kbps per channel (mono 256, stereo
 512, 5.1 and 7.1 up to 1536) and AAC keeps its 640 up to stereo, with the 768+
 presets for surround. With *Same as source* the picker keeps the whole list, since a
-batch can mix layouts, and each file's request is lowered to what its own channel
-count takes (a mono source asked for 512 kbps Opus gets 256 instead of a failed run;
-a request is never raised). With several audio tracks that is the track ffmpeg
-encodes: the one flagged default, else the one with the most channels, or the first
-when every track is kept. Changing codec or channels clamps an out-of-range selection
-down rather than failing at convert time.
+batch can mix layouts. Only Opus refuses a bitrate, so only an Opus request is lowered
+to what the file's own channel count takes (a mono source asked for 512 kbps gets 256
+instead of a failed run; a request is never raised); MP3 and AC-3 clamp inside ffmpeg
+and AAC takes what it is given. With several audio tracks the count is that of the track
+ffmpeg encodes: the one flagged default, else the one with the most channels (a track
+that only starts after ffmpeg's probe window is not noticed), or the first when every
+track is kept. Changing codec or channels clamps an out-of-range selection down rather
+than failing at convert time.
 
 For genuinely lossless output, pair **Video: Copy** with **Audio: FLAC** in MKV:
 the video is passed through untouched and the audio is re-encoded without loss

@@ -693,6 +693,15 @@ final class ConversionEngineTests: XCTestCase {
         return size * 8 / 1000 / seconds
     }
 
+    /// Bitrate of one audio stream (`a:index`) from its packet sizes, so tracks that were copied
+    /// into the same file do not count towards it.
+    private func streamKbps(_ tools: FFmpegTools, _ url: URL, audioIndex: Int, seconds: Double) throws -> Double {
+        let out = try run(tools.ffprobe, ["-v", "error", "-select_streams", "a:\(audioIndex)",
+                                          "-show_entries", "packet=size", "-of", "csv=p=0", url.path])
+        let bytes = out.split(separator: "\n").compactMap { Double($0.split(separator: ",").first ?? "") }.reduce(0, +)
+        return bytes * 8 / 1000 / seconds
+    }
+
     private func audioStreams(_ tools: FFmpegTools, _ url: URL) throws -> [(codec: String, channels: Int)] {
         let json = try run(tools.ffprobe, ["-v", "error", "-select_streams", "a", "-show_streams", "-of", "json", url.path])
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
@@ -734,9 +743,15 @@ final class ConversionEngineTests: XCTestCase {
             } catch { return (error, 0) }
         }
         // How much of the request must show up in the output. AAC plateaus below it up to stereo
-        // (about 220 kbps mono, 420 stereo), so only surround is held to it.
+        // (about 220 kbps mono, 420 stereo), so only surround is held to it, with the ratios it
+        // actually delivers on this source (5.1 about 0.73, 7.1 about 0.99).
         func honouredRatio(_ codec: AudioCodec, _ layout: AudioChannels) -> Double? {
-            codec == .aac ? (layout == .surround51 || layout == .surround71 ? 0.6 : nil) : 0.85
+            guard codec == .aac else { return 0.85 }
+            switch layout {
+            case .surround51: return 0.65
+            case .surround71: return 0.9
+            default: return nil
+            }
         }
 
         let cases: [(codec: AudioCodec, container: Container, encoder: String)] = [
@@ -753,7 +768,10 @@ final class ConversionEngineTests: XCTestCase {
                     XCTAssertTrue(CodecCompatibility.isValidCombo(settings(codec, container, layout, option)),
                                   "\(label): offered \(option) must be a valid combo")
                 }
-                for option in [offered.first!, offered.last!] {
+                // Auto, the lowest numeric preset and the largest one.
+                var picks = [offered.first!, offered.last!]
+                if offered.count > 2 { picks.insert(offered[1], at: 1) }
+                for option in picks {
                     let (error, kbps) = await convert(settings(codec, container, layout, option), channels: n)
                     if let error { XCTFail("\(label) offers \(option) but ffmpeg fails: \(error)"); continue }
                     if case .kbps(let requested) = option, let ratio = honouredRatio(codec, layout) {
@@ -837,6 +855,12 @@ final class ConversionEngineTests: XCTestCase {
                 if keepAll {
                     XCTAssertEqual(streams.map { $0.codec }, ["opus", "pcm_s16le"], label)
                     XCTAssertEqual(streams.first?.channels, first, label)
+                    // The re-encoded first track alone, not the copied PCM beside it: stereo keeps
+                    // its 512, a mono first track is lowered to 256 instead of being refused.
+                    let expected = Double(min(512, 256 * first))
+                    XCTAssertGreaterThanOrEqual(
+                        try streamKbps(tools, output, audioIndex: 0, seconds: source.durationSeconds ?? 2),
+                        expected * 0.85, label)
                 } else {
                     XCTAssertEqual(streams.map { $0.codec }, ["opus"], label)
                     XCTAssertEqual(streams.first?.channels, selected, label)

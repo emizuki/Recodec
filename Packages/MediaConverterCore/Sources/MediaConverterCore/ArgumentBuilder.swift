@@ -118,18 +118,21 @@ public enum ArgumentBuilder {
                             "-color_trc", "bt709"]
         }
 
-        // The picker only offers bitrates the chosen layout accepts, but "same as source"
-        // leaves the layout to the file: a mono source asked for 512 kbps Opus would be
-        // rejected by libopus (256 kbps per channel). Apply the ceiling with the real channel
-        // count of the stream that gets encoded so such a request is lowered instead of failing
-        // the run: the one ffmpeg selects by itself, or the first one when every stream is kept
-        // (`-c:a:0`). Never raised, and an unknown count assumes stereo.
+        // Opus is the one encoder that refuses a bitrate (libopus takes 256 kbps per channel):
+        // the picker offers only what the chosen layout takes, but "same as source" leaves the
+        // layout to the file, so a mono source asked for 512 kbps would fail the run. Lower the
+        // request to the ceiling of the stream that gets encoded: the one ffmpeg selects by itself,
+        // or the first one when every stream is kept (`-c:a:0`). Never raised; an unknown count
+        // assumes stereo. The other encoders are left alone on purpose: mp3 and ac3 clamp inside
+        // ffmpeg and aac takes whatever it is given (a 96 kHz stereo file honours 768+), so lowering
+        // those here would only throw away a rate the encoder delivers.
         var audioBitrate = s.audioBitrate
-        let encodedChannels = s.channels.count
-            ?? (s.preserveAllStreams ? source.firstAudioChannels : source.audioChannels) ?? 2
-        if case .kbps(let requested) = s.audioBitrate,
-           let ceiling = CodecCompatibility.maxAudioKbps(for: s.audioCodec, channels: encodedChannels) {
-            audioBitrate = .kbps(min(requested, ceiling))
+        if s.audioCodec == .opus, case .kbps(let requested) = s.audioBitrate {
+            let encodedChannels = s.channels.count
+                ?? (s.preserveAllStreams ? source.firstAudioChannels : source.audioChannels) ?? 2
+            if let ceiling = CodecCompatibility.maxAudioKbps(for: .opus, channels: encodedChannels) {
+                audioBitrate = .kbps(min(requested, ceiling))
+            }
         }
 
         var audioArgs: [String] = []
