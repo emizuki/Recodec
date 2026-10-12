@@ -1,16 +1,24 @@
 name: Tests
 
+# macOS runners cost ten times a Linux one, so do not run what nobody reads: a newer push to the same
+# ref cancels the run in flight, and a pull request that only touches docs does not start one.
 on:
   push:
     branches: [main]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The engine tests run the real ffmpeg; the ones that need a filter or encoder it lacks skip.
       - name: Install ffmpeg and XcodeGen
