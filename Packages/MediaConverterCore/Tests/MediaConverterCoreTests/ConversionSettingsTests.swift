@@ -93,6 +93,20 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertFalse(Container.gif.supportsSubtitles)
     }
 
+    func testSubtitleDefaultNoneIsOfferedOnlyWhereTheMuxerCanHonourIt() {
+        for container in [Container.mp4, .mov, .m4v] {
+            XCTAssertFalse(SubtitleDefault.presets(for: container).contains(.none), "\(container)")
+        }
+        for container in [Container.mkv, .webm] {
+            XCTAssertTrue(SubtitleDefault.presets(for: container).contains(.none), "\(container)")
+        }
+        // Everything else stays: leaving the source alone and picking a language work everywhere.
+        for container in [Container.mp4, .mov, .m4v, .mkv, .webm] {
+            let presets = SubtitleDefault.presets(for: container)
+            XCTAssertTrue(presets.contains(.unchanged) && presets.contains(.language("eng")), "\(container)")
+        }
+    }
+
     func testDefaultRateControlIsQuality() {
         let s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
         XCTAssertEqual(s.rateControl, .quality)

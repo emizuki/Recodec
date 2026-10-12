@@ -203,10 +203,20 @@ public enum SubtitleDefault: Sendable, Equatable, Hashable {
     /// Clear `default` on every subtitle track.
     case none
 
-    public static let presets: [SubtitleDefault] = [
+    private static let allPresets: [SubtitleDefault] = [
         .unchanged, .none, .language("eng"), .language("ger"),
         .language("fre"), .language("spa"), .language("ita"),
     ]
+
+    /// The choices worth offering for `container`. The MP4-family muxers re-enable the first subtitle
+    /// track when none is flagged (measured on ffmpeg 9.0.2), so there "None" does not clear the
+    /// default: it moves it to the first track. Matroska and WebM clear it for real.
+    public static func presets(for container: Container) -> [SubtitleDefault] {
+        switch container {
+        case .mp4, .mov, .m4v: return allPresets.filter { $0 != .none }
+        default:               return allPresets
+        }
+    }
 
     /// ISO 639-2 gives 20 languages two codes: a bibliographic (B) one and a terminology (T)
     /// one. MKV usually carries B (`ger`), MP4 and many encoders write T (`deu`), and both

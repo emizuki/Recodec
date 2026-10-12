@@ -153,6 +153,11 @@ public final class ConversionViewModel: ObservableObject {
         if !validAudio.contains(settings.audioCodec) {
             if let first = validAudio.first { settings.audioCodec = first }
         }
+        // A stale "None" from Matroska would otherwise ride along into a muxer that cannot honour it.
+        if settings.subtitleDefault == .none,
+           !SubtitleDefault.presets(for: settings.container).contains(.none) {
+            settings.subtitleDefault = .unchanged
+        }
         audioCodecChanged()
     }
 

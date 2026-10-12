@@ -732,6 +732,27 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertEqual(try subtitleFlags(tools, output), ["deu default=1 forced=1", "eng default=0 forced=0"])
     }
 
+    /// Why "None" is not offered for the MP4 family: those muxers re-enable the first subtitle track
+    /// when nothing is flagged, so `-disposition:s -default` ends with a default track anyway (here
+    /// the first one, not the English one the source marked). Matroska and WebM really clear it.
+    /// If a new ffmpeg stops doing this, the first expectation fails and "None" can come back.
+    func testNoneCannotClearTheDefaultSubtitleInTheMP4Family() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .multiMKV)
+        defer { discard(input) }
+
+        for container in [Container.mp4, .mov, .m4v] {
+            let output = try await keepAll(tools, input: input, to: container, video: .copy, audio: .copy,
+                                           subtitleDefault: .none)
+            defer { discard(output) }
+            let defaults = try subtitleFlags(tools, output).filter { $0.contains("default=1") }
+            XCTAssertEqual(defaults.count, 1, "\(container): a default track survives \"None\"")
+        }
+        let mkv = try await keepAll(tools, input: input, to: .mkv, video: .copy, audio: .copy, subtitleDefault: .none)
+        defer { discard(mkv) }
+        XCTAssertTrue(try subtitleFlags(tools, mkv).allSatisfy { $0.contains("default=0") })
+    }
+
     /// Each encoder opens its 2-pass stats file by output stream index; pass 1 mapped one video
     /// while pass 2 mapped both, so the second had no log.
     func testKeepAllTracksTwoPassWithSeveralVideoStreams() async throws {

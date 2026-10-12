@@ -300,6 +300,32 @@ final class ConversionViewModelTests: XCTestCase {
                        "CRF must not reset when the video codec stays valid after a container switch")
     }
 
+    /// "None" is not offered for MP4, MOV and M4V (their muxers cannot clear the default track), so
+    /// a stale choice made under Matroska must not travel with the user into them.
+    func testContainerChangeDropsANoneSubtitleDefaultTheNewContainerCannotHonour() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        for container in [Container.mp4, .mov, .m4v] {
+            vm.settings = ConversionSettings(container: container, videoCodec: .h264, audioCodec: .aac, crf: 23,
+                                             subtitleDefault: .none)
+            vm.containerChanged()
+            XCTAssertEqual(vm.settings.subtitleDefault, .unchanged, "\(container)")
+        }
+        for container in [Container.mkv, .webm] {
+            vm.settings = ConversionSettings(container: container, videoCodec: .vp9, audioCodec: .opus, crf: 31,
+                                             subtitleDefault: .none)
+            vm.containerChanged()
+            XCTAssertEqual(vm.settings.subtitleDefault, .none, "\(container) clears the flag for real")
+        }
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23,
+                                         subtitleDefault: .language("ger"))
+        vm.containerChanged()
+        XCTAssertEqual(vm.settings.subtitleDefault, .language("ger"), "a language works in every container")
+    }
+
     func testVideoCodecChangeClearsHardwareWhenUnsupported() {
         let vm = ConversionViewModel(
             engine: FakeEngine(),

@@ -244,7 +244,7 @@ struct SettingsPanel: View {
                           + "The target container must be able to hold them.")
                 controlRow("Default subtitle") {
                     Picker("Default subtitle", selection: $viewModel.settings.subtitleDefault) {
-                        ForEach(SubtitleDefault.presets, id: \.self) { Text(label($0)).tag($0) }
+                        ForEach(SubtitleDefault.presets(for: settings.container), id: \.self) { Text(label($0)).tag($0) }
                     }
                     .disabled(!settings.preserveAllStreams || !settings.container.supportsSubtitles)
                 }
