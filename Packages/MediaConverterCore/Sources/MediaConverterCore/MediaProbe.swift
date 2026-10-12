@@ -23,7 +23,7 @@ public struct MediaProbe {
                                     "-show_frames", "-read_intervals", "%+#1",
                                     "-show_entries", "frame=stream_index,media_type,color_transfer",
                                     fileURL.path]) else { return info }
-        return try FFprobeParser.parse(streams, firstVideoFrame: frame)
+        return (try? FFprobeParser.parse(streams, firstVideoFrame: frame)) ?? info
     }
 
     private func run(_ arguments: [String]) throws -> Data {

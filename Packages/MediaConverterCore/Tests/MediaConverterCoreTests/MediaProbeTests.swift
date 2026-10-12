@@ -67,4 +67,34 @@ final class MediaProbeTests: XCTestCase {
         XCTAssertEqual(info.audioCodecs, ["aac"], "the audio stream is still read")
         XCTAssertTrue(info.isHDR, "transfer read as \(info.colorTransfer ?? "nil")")
     }
+
+    /// The frame read only refines the transfer function. Output of it that cannot be parsed (here a
+    /// script stands in for ffprobe and cuts the JSON short, exit 0) must leave the file readable with
+    /// its stream-level metadata, as a failing or empty frame call does, not turn it into "Couldn't read".
+    func testUnparsableFrameOutputDoesNotMakeAReadableFileUnreadable() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let clip = dir.appendingPathComponent("probe-cut-\(UUID().uuidString).mp4")
+        let script = dir.appendingPathComponent("fake-ffprobe-\(UUID().uuidString).sh")
+        defer { try? FileManager.default.removeItem(at: clip); try? FileManager.default.removeItem(at: script) }
+        let gen = Process()
+        gen.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+        gen.arguments = ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=15:duration=1",
+                         "-c:v", "libx264", "-y", clip.path]
+        try gen.run(); gen.waitUntilExit()
+        XCTAssertEqual(gen.terminationStatus, 0)
+
+        // The real ffprobe for the stream listing; broken JSON, exit 0, for the frame call.
+        try """
+        #!/bin/sh
+        for a in "$@"; do
+          if [ "$a" = "-show_frames" ]; then echo '{"frames": ['; exit 0; fi
+        done
+        exec "\(tools.ffprobe)" "$@"
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let info = try await MediaProbe(ffprobe: script.path).probe(clip)
+        XCTAssertEqual(info.videoCodecName, "h264")
+    }
 }
