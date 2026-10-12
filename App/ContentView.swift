@@ -54,10 +54,11 @@ struct ContentView: View {
     /// With none loaded, whether the current settings alone would be.
     @ViewBuilder private var verdictSummary: some View {
         if viewModel.items.isEmpty {
-            let verdict = IPhoneCompatibilityChecker.evaluate(viewModel.settings, source: MediaInfo())
-            VerdictLabel(isReady: verdict.isCompatible,
-                         text: verdict.isCompatible ? "iPhone-ready" : (verdict.reason ?? "Not iPhone-compatible"),
-                         font: .callout)
+            if let verdict = viewModel.verdictWithoutFiles {
+                VerdictLabel(isReady: verdict.isCompatible,
+                             text: verdict.isCompatible ? "iPhone-ready" : (verdict.reason ?? "Not iPhone-compatible"),
+                             font: .callout)
+            }
         } else {
             let tally = viewModel.compatibilityTally
             if tally.total > 0 {

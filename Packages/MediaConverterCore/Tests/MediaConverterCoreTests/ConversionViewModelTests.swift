@@ -167,6 +167,32 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.compatibilityTally, CompatibilityTally(ready: 1, total: 1))
     }
 
+    // MARK: - Verdict with no files loaded
+
+    private func emptyListVM(_ settings: ConversionSettings) -> ConversionViewModel {
+        let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
+                                     toolsAvailable: true, fileExists: { _ in false })
+        vm.settings = settings
+        return vm
+    }
+
+    /// With Copy the verdict depends on the file, and there is none: promising "iPhone-ready" would
+    /// be a guess. What the settings decide on their own (the container, a re-encoded codec) still shows.
+    func testNoFilesNoVerdictWhileACodecIsCopy() {
+        for (video, audio) in [(VideoCodec.copy, AudioCodec.copy), (.hevc, .copy), (.copy, .aac)] {
+            let vm = emptyListVM(ConversionSettings(container: .mp4, videoCodec: video, audioCodec: audio, crf: 23))
+            XCTAssertNil(vm.verdictWithoutFiles, "\(video)/\(audio)")
+        }
+        let ready = emptyListVM(ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 23))
+        XCTAssertEqual(ready.verdictWithoutFiles?.isCompatible, true)
+        // Copy does not hide what is already settled: Matroska and WebM never play on an iPhone.
+        let mkv = emptyListVM(ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 23))
+        XCTAssertEqual(mkv.verdictWithoutFiles?.isCompatible, false)
+        XCTAssertEqual(mkv.verdictWithoutFiles?.reason, "MKV files don't play on iPhone")
+        let av1 = emptyListVM(ConversionSettings(container: .mp4, videoCodec: .av1, audioCodec: .copy, crf: 30))
+        XCTAssertEqual(av1.verdictWithoutFiles?.isCompatible, false)
+    }
+
     // MARK: - Codec compatibility pre-flight
 
     /// An invalid codec/container combo must set status to .failed and NOT invoke the engine.

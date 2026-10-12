@@ -64,6 +64,15 @@ public final class ConversionViewModel: ObservableObject {
         return CompatibilityTally(ready: verdicts.filter(\.isCompatible).count, total: verdicts.count)
     }
 
+    /// The footer's verdict while no file is loaded: what the settings decide on their own. With a
+    /// Copy codec the answer depends on a file that is not there, so a positive verdict is withheld
+    /// (nil) rather than guessed; a negative one (Matroska, AV1, Opus, ...) holds whatever is loaded.
+    public var verdictWithoutFiles: IPhoneCompatibility? {
+        let verdict = IPhoneCompatibilityChecker.evaluate(settings, source: MediaInfo())
+        let copiesSomething = settings.videoCodec == .copy || settings.audioCodec == .copy
+        return verdict.isCompatible && copiesSomething ? nil : verdict
+    }
+
     public func loadFiles(_ urls: [URL]) async {
         let wasEmpty = items.isEmpty
         for url in urls where !items.contains(where: { $0.url == url }) {
