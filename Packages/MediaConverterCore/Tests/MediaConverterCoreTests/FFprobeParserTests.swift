@@ -85,6 +85,21 @@ final class FFprobeParserTests: XCTestCase {
         XCTAssertFalse(try probe(streamTransfer: "bt709", frames: "").isHDR)
     }
 
+    /// `-disposition:s:<n>` and `-c:s:<n>` both count subtitle streams, so the codec and language
+    /// lists must stay index-aligned even when a stream carries no language tag or no codec name.
+    func testSubtitleLanguagesAndCodecsStayAlignedForUntaggedStreams() throws {
+        let info = try FFprobeParser.parse(Data("""
+        {"streams":[{"index":0,"codec_type":"video","codec_name":"h264"},
+                    {"index":1,"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"ger"}},
+                    {"index":2,"codec_type":"audio","codec_name":"aac"},
+                    {"index":3,"codec_type":"subtitle","codec_name":"ass"},
+                    {"index":4,"codec_type":"subtitle","tags":{"language":"eng"}},
+                    {"index":5,"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"fre"}}]}
+        """.utf8))
+        XCTAssertEqual(info.subtitleLanguages, ["ger", "", "eng", "fre"])
+        XCTAssertEqual(info.subtitleCodecs, ["subrip", "ass", "", "hdmv_pgs_subtitle"])
+    }
+
     func testChannelCountFollowsTheAudioStreamFfmpegSelects() throws {
         // Rule measured on ffmpeg 9.0.2 (`map_auto_audio`): a stream flagged default wins, then the
         // most channels, then the first of equals. `firstAudioChannels` is the first stream.

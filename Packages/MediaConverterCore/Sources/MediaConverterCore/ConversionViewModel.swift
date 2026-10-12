@@ -112,6 +112,11 @@ public final class ConversionViewModel: ObservableObject {
                 items[index].status = .failed("This codec/container combination isn't supported")
                 continue
             }
+            // A track of this file the container cannot hold: say which, instead of letting ffmpeg abort.
+            if let problem = CodecCompatibility.sourceProblem(settings, source: info) {
+                items[index].status = .failed(problem)
+                continue
+            }
             let input = items[index].url
             let output = OutputNamer.outputURL(forInput: input, container: settings.container, fileExists: fileExists)
             items[index].status = .converting

@@ -191,8 +191,15 @@ public enum ArgumentBuilder {
                 mapArgs += ["-map", "0:a?", "-map", "0:s?"]
                 // Only Matroska stores attachments (fonts for styled subtitles).
                 if s.container == .mkv { mapArgs += ["-map", "0:t?"] }
-                // Subtitles are re-muxed, never re-encoded, so copy them through.
+                // Subtitles are re-muxed. Text tracks the container cannot hold are converted to
+                // its own format (`-c:s:<n>` counts subtitle streams, like `-disposition:s:<n>`);
+                // the rest is copied through.
                 mapArgs += ["-c:s", "copy"]
+                for (index, codec) in source.subtitleCodecs.enumerated() {
+                    if case .convert(let encoder) = CodecCompatibility.subtitleHandling(for: codec, in: s.container) {
+                        mapArgs += ["-c:s:\(index)", encoder]
+                    }
+                }
                 switch s.subtitleDefault {
                 case .unchanged:
                     break

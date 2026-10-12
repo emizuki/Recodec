@@ -191,6 +191,33 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertTrue(msg.contains("supported"), "failure message should mention 'supported'; got: \(msg)")
     }
 
+    /// A file the codec lists accept but whose own tracks the container cannot hold is rejected
+    /// before ffmpeg runs, and says why; the rest of the batch still converts.
+    func testFileWithATrackTheContainerCannotHoldIsRejectedBeforeFfmpeg() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { url in
+                MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac",
+                          subtitleLanguages: ["eng"],
+                          subtitleCodecs: [url.lastPathComponent == "disc.mkv" ? "hdmv_pgs_subtitle" : "subrip"])
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/disc.mkv"), URL(fileURLWithPath: "/plain.mkv")])
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .copy, audioCodec: .copy, crf: 23,
+                                         preserveAllStreams: true)
+
+        await vm.convertAll()
+
+        XCTAssertEqual(engine.convertCount, 1, "only the file that can be converted reaches ffmpeg")
+        guard case .failed(let message) = vm.items[0].status else {
+            return XCTFail("expected .failed, got \(vm.items[0].status)")
+        }
+        XCTAssertTrue(message.contains("PGS") && message.contains("MP4"), message)
+        guard case .done = vm.items[1].status else { return XCTFail("expected .done, got \(vm.items[1].status)") }
+    }
+
     // MARK: - Failure message
 
     final class FailingEngine: ConversionEngineProtocol {

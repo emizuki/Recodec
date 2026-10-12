@@ -244,4 +244,41 @@ final class CodecCompatibilityTests: XCTestCase {
         // A codec without a bitrate keeps the whole list.
         XCTAssertEqual(CodecCompatibility.audioBitrateOptions(for: .flac, channels: .stereo), AudioBitrate.presets)
     }
+
+    // MARK: - Per-file problems the codec lists cannot see
+
+    private func keepAll(_ container: Container, video: VideoCodec = .copy, audio: AudioCodec = .copy) -> ConversionSettings {
+        var s = ConversionSettings(container: container, videoCodec: video, audioCodec: audio, crf: 20)
+        s.preserveAllStreams = true
+        return s
+    }
+
+    /// Bitmap subtitles cannot become text, and only Matroska keeps PGS (measured on ffmpeg 9.0.2:
+    /// MP4, MOV, M4V and WebM abort with "codec not currently supported in container").
+    func testPGSSubtitlesBlockEveryContainerButMatroska() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng", "ger"], subtitleCodecs: ["subrip", "hdmv_pgs_subtitle"])
+        for container in [Container.mp4, .mov, .m4v, .webm] {
+            let problem = CodecCompatibility.sourceProblem(keepAll(container), source: source)
+            XCTAssertNotNil(problem, "\(container)")
+            XCTAssertTrue(problem?.contains("track 2") == true && problem?.contains("PGS") == true, "\(container): \(problem ?? "nil")")
+        }
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mkv), source: source))
+    }
+
+    func testTextSubtitlesAreNeverAProblemBecauseTheyAreConverted() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng", "ger", "fre"], subtitleCodecs: ["subrip", "ass", "mov_text"])
+        for container in [Container.mp4, .mov, .m4v, .webm, .mkv] {
+            XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(container), source: source), "\(container)")
+        }
+    }
+
+    func testSubtitlesAreNotMappedWithoutKeepAllSoTheyCannotBlock() {
+        var s = keepAll(.mp4)
+        s.preserveAllStreams = false
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng"], subtitleCodecs: ["hdmv_pgs_subtitle"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source))
+    }
 }

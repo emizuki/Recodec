@@ -59,11 +59,12 @@ public enum FFprobeParser {
         let duration = probe.format?.duration.flatMap(Double.init)
         // Subtitle order here must match ffmpeg's own `-disposition:s:<n>` index,
         // so keep untagged streams in place as empty strings rather than dropping them.
-        let subtitles = probe.streams?
-            .filter { $0.codec_type == "subtitle" }
-            .map { $0.tags?.language ?? "" } ?? []
+        let subtitleStreams = probe.streams?.filter { $0.codec_type == "subtitle" } ?? []
+        let subtitles = subtitleStreams.map { $0.tags?.language ?? "" }
+        let subtitleCodecs = subtitleStreams.map { $0.codec_name ?? "" }
         return MediaInfo(durationSeconds: duration, videoCodecName: video,
                          audioCodecName: audio, subtitleLanguages: subtitles,
+                         subtitleCodecs: subtitleCodecs,
                          colorTransfer: colorTransfer,
                          audioChannels: autoSelectedAudio(audioStreams)?.channels,
                          firstAudioChannels: audioStream?.channels)

@@ -45,6 +45,53 @@ public enum CodecCompatibility {
             && isAudioBitrateValid(settings.audioBitrate, for: settings.audioCodec, channels: settings.channels)
     }
 
+    /// What happens to one subtitle track when every stream is kept and mapped into a container.
+    public enum SubtitleHandling: Equatable {
+        /// Passed through untouched.
+        case copy
+        /// Re-encoded with this ffmpeg subtitle encoder: text stays text, only the format changes.
+        case convert(to: String)
+        /// No way into this container: bitmap subtitles cannot become text.
+        case unsupported
+    }
+
+    /// Measured against ffmpeg 9.0.2 (stream copy, then `-c:s <encoder>`): MP4, MOV and M4V hold only
+    /// mov_text, WebM only WebVTT, Matroska every text format but mov_text; PGS is kept by Matroska
+    /// and rejected by the rest. Codecs outside these two sets (VobSub, DVB, ...) were not measured and
+    /// are left to ffmpeg, which reports its own reason if the container refuses them.
+    private static let textSubtitleCodecs: Set<String> = ["subrip", "ass", "webvtt", "mov_text"]
+    private static let bitmapSubtitleCodecs: Set<String> = ["hdmv_pgs_subtitle"]
+
+    public static func subtitleHandling(for codec: String, in container: Container) -> SubtitleHandling {
+        if bitmapSubtitleCodecs.contains(codec) { return container == .mkv ? .copy : .unsupported }
+        guard textSubtitleCodecs.contains(codec) else { return .copy }
+        switch container {
+        case .mp4, .mov, .m4v: return codec == "mov_text" ? .copy : .convert(to: "mov_text")
+        // Styled ASS stays ASS in Matroska; only mov_text has to change.
+        case .mkv:             return codec == "mov_text" ? .convert(to: "srt") : .copy
+        case .webm:            return codec == "webvtt" ? .copy : .convert(to: "webvtt")
+        default:               return .copy
+        }
+    }
+
+    private static func displayName(ofCodec codec: String) -> String {
+        ["hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub"][codec] ?? codec.uppercased()
+    }
+
+    /// Why this file cannot be converted with these settings although the codec lists accept them:
+    /// a track of its own that the target container cannot hold. nil when nothing stands in the way.
+    /// Only checked with every stream kept; otherwise ffmpeg picks its own streams.
+    public static func sourceProblem(_ settings: ConversionSettings, source: MediaInfo) -> String? {
+        guard settings.preserveAllStreams, settings.container.supportsSubtitles else { return nil }
+        let target = settings.container.fileExtension.uppercased()
+        let advice = "Use MKV, or turn off Keep all audio and subtitle tracks."
+        for (index, codec) in source.subtitleCodecs.enumerated()
+        where subtitleHandling(for: codec, in: settings.container) == .unsupported {
+            return "Subtitle track \(index + 1) (\(displayName(ofCodec: codec))) can't go into \(target). \(advice)"
+        }
+        return nil
+    }
+
     /// Channel layouts each audio encoder actually accepts. ffmpeg aborts the run
     /// with "Specified channel layout is not supported by the <x> encoder" rather
     /// than down-mixing, so unsupported combinations must not be offered.

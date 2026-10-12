@@ -124,6 +124,51 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertTrue(args.contains("-c:a"))
     }
 
+    // MARK: - Subtitles are converted to what the container holds
+
+    /// Subtitle codecs are positional: `-c:s:<n>` counts subtitle streams, like `-disposition:s:<n>`.
+    private func subtitleArgs(_ container: Container, _ codecs: [String], keepAll: Bool = true) -> [[String]] {
+        var s = ConversionSettings(container: container, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        s.preserveAllStreams = keepAll
+        let source = MediaInfo(durationSeconds: 10, videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: codecs.map { _ in "eng" }, subtitleCodecs: codecs)
+        let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out", source: source)[0]
+        return pairs(args).filter { $0[0].hasPrefix("-c:s") }
+    }
+
+    func testKeepAllConvertsTextSubtitlesToTheContainersFormat() {
+        // MP4, MOV and M4V hold only mov_text; WebM only WebVTT; MKV takes the text formats as they
+        // are and refuses mov_text. Without the conversion each of these aborts the run.
+        XCTAssertEqual(subtitleArgs(.mp4, ["subrip", "ass"]),
+                       [["-c:s", "copy"], ["-c:s:0", "mov_text"], ["-c:s:1", "mov_text"]])
+        XCTAssertEqual(subtitleArgs(.mov, ["webvtt"]), [["-c:s", "copy"], ["-c:s:0", "mov_text"]])
+        XCTAssertEqual(subtitleArgs(.m4v, ["subrip"]), [["-c:s", "copy"], ["-c:s:0", "mov_text"]])
+        XCTAssertEqual(subtitleArgs(.webm, ["subrip", "ass", "mov_text"]),
+                       [["-c:s", "copy"], ["-c:s:0", "webvtt"], ["-c:s:1", "webvtt"], ["-c:s:2", "webvtt"]])
+        XCTAssertEqual(subtitleArgs(.mkv, ["mov_text"]), [["-c:s", "copy"], ["-c:s:0", "srt"]])
+    }
+
+    func testKeepAllCopiesSubtitlesTheContainerAlreadyHolds() {
+        XCTAssertEqual(subtitleArgs(.mp4, ["mov_text"]), [["-c:s", "copy"]])
+        XCTAssertEqual(subtitleArgs(.webm, ["webvtt"]), [["-c:s", "copy"]])
+        // Styled ASS must reach MKV untouched; converting it to SubRip would drop the styling.
+        XCTAssertEqual(subtitleArgs(.mkv, ["ass", "subrip", "webvtt", "hdmv_pgs_subtitle"]), [["-c:s", "copy"]])
+    }
+
+    func testSubtitleConversionIsAddressedByPositionAmongSubtitles() {
+        XCTAssertEqual(subtitleArgs(.mp4, ["mov_text", "subrip", "mov_text", "ass"]),
+                       [["-c:s", "copy"], ["-c:s:1", "mov_text"], ["-c:s:3", "mov_text"]])
+    }
+
+    func testSubtitlesOfAnUnknownCodecAreLeftToFfmpeg() {
+        XCTAssertEqual(subtitleArgs(.mp4, ["dvd_subtitle", "somethingnew"]), [["-c:s", "copy"]])
+    }
+
+    func testWithoutKeepAllNoSubtitleCodecIsChosen() {
+        // ffmpeg's own selection picks one track and the container's default subtitle encoder.
+        XCTAssertEqual(subtitleArgs(.mp4, ["subrip"], keepAll: false), [])
+    }
+
     func testSubtitleDefaultByLanguageUsesSubtitleRelativeIndex() {
         var s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 20)
         s.preserveAllStreams = true

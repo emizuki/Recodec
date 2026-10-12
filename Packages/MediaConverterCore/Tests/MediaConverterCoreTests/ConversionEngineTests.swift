@@ -369,6 +369,8 @@ final class ConversionEngineTests: XCTestCase {
         /// Two PCM audio streams with `first` and `second` independent channels, in an MKV. The
         /// stream at index `defaultStream` carries the `default` flag.
         case twoAudioMKV(first: Int, second: Int, defaultStream: Int)
+        /// h264, aac and two text subtitle tracks (ger, eng) in `codec`: subrip, ass, webvtt or mov_text.
+        case subtitled(codec: String)
     }
 
     private func makeLayout(_ tools: FFmpegTools, _ layout: Layout) throws -> URL {
@@ -472,6 +474,17 @@ final class ConversionEngineTests: XCTestCase {
             _ = try run(tools.ffmpeg, base + video + ["-f", "lavfi", "-i", "smptebars=size=160x120:rate=15:duration=2"]
                                       + audio + ["-map", "0:v", "-map", "1:v", "-map", "2:a"] + x264
                                       + ["-c:a", "aac", "-y", out.path])
+        case .subtitled(let codec):
+            let ger = tmp("ger.srt"), eng = tmp("eng.srt"); scratch += [ger, eng]
+            try "1\n00:00:00,000 --> 00:00:01,000\nHallo\n".write(to: ger, atomically: true, encoding: .utf8)
+            try "1\n00:00:00,000 --> 00:00:01,000\nHello\n".write(to: eng, atomically: true, encoding: .utf8)
+            // mov_text lives in MP4, everything else in Matroska.
+            out = tmp("subtitled.\(codec == "mov_text" ? "mp4" : "mkv")")
+            _ = try run(tools.ffmpeg, base + video + audio + ["-i", ger.path, "-i", eng.path,
+                                                               "-map", "0:v", "-map", "1:a", "-map", "2", "-map", "3"]
+                                      + x264 + ["-c:a", "aac", "-c:s", codec,
+                                                "-metadata:s:s:0", "language=ger", "-metadata:s:s:1", "language=eng",
+                                                "-y", out.path])
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "could not generate the \(layout) fixture")
         return out
@@ -614,6 +627,42 @@ final class ConversionEngineTests: XCTestCase {
         let result = try layoutOf(tools, output)
         XCTAssertEqual(result.pictures, 1)
         XCTAssertEqual(try videoStream(tools, output)["codec_tag_string"] as? String, "hvc1")
+    }
+
+    /// Codec of every subtitle stream, in order.
+    private func subtitleCodecs(_ tools: FFmpegTools, _ url: URL) throws -> [String] {
+        try run(tools.ffprobe, ["-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                                "-of", "csv=p=0", url.path])
+            .split(separator: "\n").map(String.init)
+    }
+
+    /// SubRip into MP4/MOV/M4V/WebM, mov_text into MKV/WebM and the like aborted the whole run
+    /// ("codec not currently supported in container"). Text subtitles are now converted to the
+    /// container's own format; each case below is one that used to fail.
+    func testKeepAllConvertsTextSubtitlesToWhatTheContainerHolds() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        try requireEncoder(tools, "libvpx-vp9")
+        let cases: [(source: String, target: Container, expected: String)] = [
+            ("subrip", .mp4, "mov_text"), ("subrip", .mov, "mov_text"), ("subrip", .m4v, "mov_text"),
+            ("subrip", .webm, "webvtt"), ("subrip", .mkv, "subrip"),
+            ("mov_text", .mkv, "subrip"), ("mov_text", .webm, "webvtt"), ("mov_text", .mp4, "mov_text"),
+            ("ass", .mp4, "mov_text"), ("ass", .webm, "webvtt"), ("ass", .mkv, "ass"),
+            ("webvtt", .mp4, "mov_text"), ("webvtt", .webm, "webvtt"),
+        ]
+        for source in Set(cases.map(\.source)).sorted() {
+            let input = try makeLayout(tools, .subtitled(codec: source))
+            defer { discard(input) }
+            for testCase in cases where testCase.source == source {
+                let webm = testCase.target == .webm
+                let output = try await keepAll(tools, input: input, to: testCase.target,
+                                               video: webm ? .vp9 : .copy, audio: webm ? .opus : .copy)
+                defer { discard(output) }
+                XCTAssertEqual(try subtitleCodecs(tools, output), [testCase.expected, testCase.expected],
+                               "\(source) -> \(testCase.target)")
+                XCTAssertEqual(try subtitleFlags(tools, output).map { String($0.prefix(3)) }, ["ger", "eng"],
+                               "\(source) -> \(testCase.target): languages survive the conversion")
+            }
+        }
     }
 
     /// A run ffmpeg really aborts: the second audio track (AC-3) cannot go into WebM. The error

@@ -8,6 +8,9 @@ public struct MediaInfo: Sendable, Equatable {
     /// Streams with no language tag appear as an empty string so the indices
     /// stay aligned with ffmpeg's `-disposition:s:<n>` numbering.
     public var subtitleLanguages: [String]
+    /// ffprobe `codec_name` of every subtitle stream, in the same order as `subtitleLanguages`
+    /// (`subrip`, `ass`, `mov_text`, `webvtt`, `hdmv_pgs_subtitle`, ...). Empty when unknown.
+    public var subtitleCodecs: [String]
     /// ffprobe `color_transfer` of the first video stream (e.g. `smpte2084`,
     /// `arib-std-b67`, `bt709`). nil when untagged or audio-only.
     public var colorTransfer: String?
@@ -22,12 +25,14 @@ public struct MediaInfo: Sendable, Equatable {
 
     public init(durationSeconds: Double? = nil, videoCodecName: String? = nil,
                 audioCodecName: String? = nil, subtitleLanguages: [String] = [],
+                subtitleCodecs: [String] = [],
                 colorTransfer: String? = nil, audioChannels: Int? = nil,
                 firstAudioChannels: Int? = nil) {
         self.durationSeconds = durationSeconds
         self.videoCodecName = videoCodecName
         self.audioCodecName = audioCodecName
         self.subtitleLanguages = subtitleLanguages
+        self.subtitleCodecs = subtitleCodecs
         self.colorTransfer = colorTransfer
         self.audioChannels = audioChannels
         self.firstAudioChannels = firstAudioChannels ?? audioChannels
