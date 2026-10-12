@@ -282,6 +282,31 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source))
     }
 
+    /// The file row shows a reason in two lines of 240 pt of caption text and cuts the rest: the
+    /// first version of these messages lost "...turn off Keep all tracks" at about 95 characters,
+    /// which is the part that says what to do. Keep every one well under that.
+    func testEveryPerFileReasonFitsTheTwoLineRow() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "truehd",
+                               audioCodecs: ["truehd", "eac3", "flac", "opus", "ac3", "dts"],
+                               subtitleLanguages: ["eng"], subtitleCodecs: ["hdmv_pgs_subtitle"])
+        var withoutSubtitles = source
+        withoutSubtitles.subtitleCodecs = []
+        var messages: [String] = []
+        for container in Container.allCases where container != .gif {
+            for audio in [AudioCodec.copy, .aac] {
+                let s = keepAll(container, video: .copy, audio: audio)
+                // One run reaches the subtitle reason, the other the audio one.
+                messages.append(CodecCompatibility.sourceProblem(s, source: source) ?? "")
+                messages.append(CodecCompatibility.sourceProblem(s, source: withoutSubtitles) ?? "")
+            }
+        }
+        let reasons = messages.filter { !$0.isEmpty }
+        XCTAssertGreaterThan(reasons.count, 10, "the matrix must actually produce reasons")
+        for reason in reasons {
+            XCTAssertLessThanOrEqual(reason.count, 85, reason)
+        }
+    }
+
     func testAnExtraAudioTrackTheContainerCannotHoldBlocksTheFile() {
         // Only the first track is re-encoded; the others are copied as they are.
         let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac", audioCodecs: ["aac", "ac3"])

@@ -113,7 +113,7 @@ public enum CodecCompatibility {
             for (index, codec) in source.subtitleCodecs.enumerated()
             where subtitleHandling(for: codec, in: container) == .unsupported {
                 return "Subtitle track \(index + 1) (\(displayName(ofCodec: codec))) can't go into \(target). "
-                    + "Use MKV, or turn off Keep all audio and subtitle tracks."
+                    + "Use MKV, or turn off Keep all tracks."
             }
         }
 
@@ -130,11 +130,11 @@ public enum CodecCompatibility {
         }
         for (index, codec) in mapped.enumerated()
         where index >= firstCopiedTrack && !canCopyAudio(codec, into: container) {
-            let what = "Audio track \(index + 1) (\(displayName(ofCodec: codec))) can't be copied into \(target)."
+            let what = "Audio track \(index + 1) (\(displayName(ofCodec: codec))) can't go into \(target)."
             // A copied first track is the user's own choice; turning Keep all off would not change it.
             return index == 0
-                ? "\(what) Choose another audio codec, or use MKV."
-                : "\(what) Use MKV, or turn off Keep all audio and subtitle tracks."
+                ? "\(what) Pick another audio codec, or use MKV."
+                : "\(what) Use MKV, or turn off Keep all tracks."
         }
         return nil
     }
