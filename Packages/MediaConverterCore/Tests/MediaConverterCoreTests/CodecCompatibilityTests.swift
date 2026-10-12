@@ -354,6 +354,8 @@ final class CodecCompatibilityTests: XCTestCase {
             ("alac", ["-c:a", "alac"]), ("flac", ["-c:a", "flac"]), ("mp3", ["-c:a", "libmp3lame"]),
             ("opus", ["-c:a", "libopus"]), ("pcm_s16le", ["-c:a", "pcm_s16le"]), ("mp2", ["-c:a", "mp2"]),
             ("dts", ["-c:a", "dca", "-strict", "-2"]), ("truehd", ["-c:a", "truehd", "-strict", "-2", "-ar", "48000"]),
+            // ffmpeg's native Vorbis encoder is experimental and stereo only; the table claims WebM takes it.
+            ("vorbis", ["-c:a", "vorbis", "-strict", "-2", "-ac", "2"]),
         ]
         func ffmpeg(_ args: [String]) throws -> Bool {
             let p = Process()
