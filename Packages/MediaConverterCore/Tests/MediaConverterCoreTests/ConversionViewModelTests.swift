@@ -256,7 +256,7 @@ final class ConversionViewModelTests: XCTestCase {
 
     private func failureMessage(stderr: String) async -> String? {
         let vm = ConversionViewModel(
-            engine: FailingEngine(ConversionError.ffmpegFailed(code: 234, stderrTail: stderr)),
+            engine: FailingEngine(ConversionError.ffmpegFailed(code: 234, stderrHead: stderr)),
             probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
             toolsAvailable: true,
             fileExists: { _ in false })

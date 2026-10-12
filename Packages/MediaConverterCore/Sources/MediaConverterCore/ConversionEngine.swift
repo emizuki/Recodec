@@ -7,7 +7,7 @@ public protocol ConversionEngineProtocol {
 }
 
 public enum ConversionError: Error {
-    case ffmpegFailed(code: Int32, stderrTail: String)
+    case ffmpegFailed(code: Int32, stderrHead: String)
     case cancelled
 }
 
@@ -18,8 +18,8 @@ extension ConversionError: LocalizedError {
         switch self {
         case .cancelled:
             return "Cancelled"
-        case .ffmpegFailed(_, let stderrTail):
-            let first = stderrTail
+        case .ffmpegFailed(_, let stderrHead):
+            let first = stderrHead
                 .split(whereSeparator: \.isNewline)
                 .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             guard let line = first else { return "ffmpeg failed" }
@@ -77,16 +77,19 @@ private final class ConversionState: @unchecked Sendable {
     }
 }
 
-/// Accumulates Data chunks appended from a readabilityHandler behind a lock.
-/// Draining stderr concurrently prevents the pipe buffer from filling when ffmpeg
-/// writes more than ~64 KB to stderr, which would cause ffmpeg to block and never exit.
+/// Keeps the first `limit` bytes of what is appended from a readabilityHandler, behind a lock.
+/// The handler must keep draining stderr after that: ffmpeg blocks and never exits once the pipe
+/// buffer (~64 KB) is full, so the excess is read and dropped, not left in the pipe.
 private final class LockedBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
+    private let limit: Int
+
+    init(limit: Int) { self.limit = limit }
 
     func append(_ chunk: Data) {
         lock.lock()
-        data.append(chunk)
+        data.append(chunk.prefix(max(0, limit - data.count)))
         lock.unlock()
     }
 
@@ -122,8 +125,9 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
     private let ffmpeg: String
     private let state = ConversionState()
 
-    /// Enough for the whole error cascade of a failed run (a few hundred bytes with `-loglevel error`).
-    private static let stderrTailBytes = 4096
+    /// What is kept of ffmpeg's stderr: the beginning, since the cause is logged first. Everything
+    /// after the limit is still read (so ffmpeg never blocks on a full pipe) and then dropped.
+    private static let stderrHeadBytes = 4096
 
     public init(ffmpeg: String) { self.ffmpeg = ffmpeg }
 
@@ -174,7 +178,7 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
         }
 
         // Drain stderr concurrently so ffmpeg never blocks on a full pipe buffer. A readDataToEndOfFile() after exit would deadlock if ffmpeg wrote >~64 KB.
-        let stderrBuffer = LockedBuffer()
+        let stderrBuffer = LockedBuffer(limit: Self.stderrHeadBytes)
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             guard !chunk.isEmpty else { return }
@@ -201,14 +205,13 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
         stderr.fileHandleForReading.readabilityHandler = nil
         // Final synchronous drain: bytes ffmpeg wrote just before exit may still sit in the kernel pipe buffer. Safe post-exit — the write end is closed and the concurrent handler is already nil'd.
         stderrBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
-        let stderrData = stderrBuffer.accumulated
 
         if state.finishAndWasCancelled() {
             throw ConversionError.cancelled
         }
         guard process.terminationStatus == 0 else {
-            let tail = String(decoding: stderrData.suffix(Self.stderrTailBytes), as: UTF8.self)
-            throw ConversionError.ffmpegFailed(code: process.terminationStatus, stderrTail: tail)
+            throw ConversionError.ffmpegFailed(code: process.terminationStatus,
+                                               stderrHead: String(decoding: stderrBuffer.accumulated, as: UTF8.self))
         }
     }
 

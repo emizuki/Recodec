@@ -68,10 +68,10 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertTrue(leftovers.isEmpty, "passlog temp files must be removed")
     }
 
-    /// Regression: when ffmpeg exits with a non-zero status the stderrTail must be
+    /// Regression: when ffmpeg exits with a non-zero status the stderrHead must be
     /// non-empty — bytes that sat in the kernel pipe buffer after the handler was nil'd
     /// must be captured by the final synchronous readDataToEndOfFile() call.
-    func testFfmpegFailureHasNonEmptyStderrTail() async throws {
+    func testFfmpegFailureHasNonEmptyStderrHead() async throws {
         guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         let nonexistent = dir.appendingPathComponent("nonexistent-\(UUID().uuidString).mp4")
@@ -86,9 +86,40 @@ final class ConversionEngineTests: XCTestCase {
             try await engine.convert(input: nonexistent, output: output,
                                      settings: settings, source: source) { _ in }
             XCTFail("Expected ConversionError.ffmpegFailed to be thrown")
-        } catch ConversionError.ffmpegFailed(_, let stderrTail) {
-            XCTAssertFalse(stderrTail.isEmpty,
-                           "stderrTail must not be empty on ffmpeg failure — final pipe drain may be missing")
+        } catch ConversionError.ffmpegFailed(_, let stderrHead) {
+            XCTAssertFalse(stderrHead.isEmpty,
+                           "stderrHead must not be empty on ffmpeg failure — final pipe drain may be missing")
+        }
+    }
+
+    /// ffmpeg logs the cause first and the consequences after it. When the log is longer than what
+    /// the engine keeps, the reason must still be that first line, not whatever is left after the log
+    /// was cut from the front (a corrupt input floods stderr with decoder errors). A script stands in
+    /// for ffmpeg so the log is exactly this long every time.
+    func testALongErrorLogStillShowsItsFirstLine() async throws {
+        let script = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("fake-ffmpeg-\(UUID().uuidString).sh")
+        try """
+        #!/bin/sh
+        echo "[mp4 @ 0x1] The actual cause" >&2
+        i=0
+        while [ $i -lt 300 ]; do
+          echo "[h264 @ 0x2] decoder complaint number $i, padded so that the whole log is far over 4096 bytes" >&2
+          i=$((i + 1))
+        done
+        exit 1
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        defer { try? FileManager.default.removeItem(at: script) }
+
+        let settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        do {
+            try await FFmpegConversionEngine(ffmpeg: script.path)
+                .convert(input: URL(fileURLWithPath: "/in.mkv"),
+                         output: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("never-\(UUID().uuidString).mp4"),
+                         settings: settings, source: MediaInfo()) { _ in }
+            XCTFail("the script exits 1")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "The actual cause")
         }
     }
 
