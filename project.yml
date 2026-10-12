@@ -16,6 +16,9 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleName: Recodec
+        # XcodeGen writes a literal 1.0 / 1 unless these point at the build settings.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Recodec
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
