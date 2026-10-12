@@ -14,14 +14,17 @@ public enum FFprobeParser {
             let tags: Tags?
         }
         struct Format: Decodable { let duration: String? }
+        let streams: [Stream]?
+        let format: Format?
+    }
+
+    private struct FrameProbe: Decodable {
         struct Frame: Decodable {
             let stream_index: Int?
             let media_type: String?
             let color_transfer: String?
         }
-        let streams: [Stream]?
         let frames: [Frame]?
-        let format: Format?
     }
 
     /// The audio stream ffmpeg selects when nothing is mapped (ffmpeg's `map_auto_audio`). Its score
@@ -39,7 +42,10 @@ public enum FFprobeParser {
         return best?.stream
     }
 
-    public static func parse(_ data: Data) throws -> MediaInfo {
+    /// `firstVideoFrame` is ffprobe's `-show_frames` JSON for the first video stream alone (see
+    /// `MediaProbe`); it is separate because `-select_streams` would also hide the other streams from
+    /// the stream listing this reads everything else from.
+    public static func parse(_ data: Data, firstVideoFrame frameData: Data? = nil) throws -> MediaInfo {
         let probe = try JSONDecoder().decode(Probe.self, from: data)
         // The first video stream, and its position: `-show_frames` names the stream by index.
         let firstVideo = probe.streams?.enumerated().first { $0.element.codec_type == "video" }
@@ -49,7 +55,8 @@ public enum FFprobeParser {
         // alternative-transfer SEI in the bitstream, which the stream entry never shows. No frame (an
         // audio-only file, or one that could not be decoded) leaves the stream-level value.
         let videoIndex = firstVideo.map { $0.element.index ?? $0.offset }
-        let frameTransfer = probe.frames?
+        let frames = try frameData.flatMap { try JSONDecoder().decode(FrameProbe.self, from: $0).frames }
+        let frameTransfer = frames?
             .first { $0.media_type == "video" && $0.stream_index == videoIndex }?
             .color_transfer
         let colorTransfer = frameTransfer ?? videoStream?.color_transfer

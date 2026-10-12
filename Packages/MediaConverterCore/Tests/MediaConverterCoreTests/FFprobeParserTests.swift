@@ -66,9 +66,8 @@ final class FFprobeParserTests: XCTestCase {
         func probe(streamTransfer: String, frames: String) throws -> MediaInfo {
             try FFprobeParser.parse(Data("""
             {"streams":[{"index":0,"codec_type":"audio","codec_name":"aac"},
-                        {"index":1,"codec_type":"video","codec_name":"hevc","color_transfer":"\(streamTransfer)"}],
-             "frames":[\(frames)]}
-            """.utf8))
+                        {"index":1,"codec_type":"video","codec_name":"hevc","color_transfer":"\(streamTransfer)"}]}
+            """.utf8), firstVideoFrame: Data(#"{"frames":[\#(frames)]}"#.utf8))
         }
         let hlgFrame = #"{"stream_index":1,"media_type":"video","color_transfer":"arib-std-b67"}"#
         for streamTransfer in ["bt2020-10", "bt709"] {
