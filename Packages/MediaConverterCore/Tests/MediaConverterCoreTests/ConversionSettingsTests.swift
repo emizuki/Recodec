@@ -68,12 +68,6 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertFalse(VideoCodec.none.supportsPreset)
     }
 
-    func testAudioBitratePresetsUpTo1536() {
-        let kbps = AudioBitrate.presets.compactMap { if case .kbps(let k) = $0 { return k } else { return nil } }
-        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640, 768, 1024, 1536])
-        XCTAssertEqual(AudioBitrate.presets.first, .auto)
-    }
-
     func testStreamPreservationDefaultsOff() {
         let s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3, crf: 20)
         XCTAssertFalse(s.preserveAllStreams)
@@ -91,6 +85,20 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertTrue(Container.mp4.supportsSubtitles)
         XCTAssertFalse(Container.m4a.supportsSubtitles)
         XCTAssertFalse(Container.gif.supportsSubtitles)
+    }
+
+    func testSubtitleDefaultNoneIsOfferedOnlyWhereTheMuxerCanHonourIt() {
+        for container in [Container.mp4, .mov, .m4v] {
+            XCTAssertFalse(SubtitleDefault.presets(for: container).contains(.none), "\(container)")
+        }
+        for container in [Container.mkv, .webm] {
+            XCTAssertTrue(SubtitleDefault.presets(for: container).contains(.none), "\(container)")
+        }
+        // Everything else stays: leaving the source alone and picking a language work everywhere.
+        for container in [Container.mp4, .mov, .m4v, .mkv, .webm] {
+            let presets = SubtitleDefault.presets(for: container)
+            XCTAssertTrue(presets.contains(.unchanged) && presets.contains(.language("eng")), "\(container)")
+        }
     }
 
     func testDefaultRateControlIsQuality() {

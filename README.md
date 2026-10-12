@@ -28,6 +28,7 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them, marks them with an **HDR → SDR** chip in the file list, and tone maps to Rec.709 on VideoToolbox.
 - **Live iPhone-ready verdict, per file** — each row says whether that file comes out iPhone-ready under your current settings (and why not), and the footer counts them ("2 of 4 iPhone-ready"). With **Copy** the answer depends on the source, so a batch can mix both.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
+- **Reasons, not "Conversion failed!":** when ffmpeg cannot convert a file, its row shows the first error ffmpeg logged (the muxer's own sentence), or, for a track the container cannot hold, which track and what to do.
 
 ## Multi-track sources
 
@@ -39,8 +40,8 @@ conversions produce byte-identical output.
 A disc remux is usually not a single-track source. Open **More options** and turn on
 **Keep all audio and subtitle tracks** and Recodec maps every video, audio and subtitle stream from the input
 instead (plus attachments such as fonts, into MKV), copying subtitles through
-untouched (they are re-muxed, never re-encoded). Chapters are carried through
-either way, wherever the container can hold them.
+(text ones are converted where the container needs another format, see below).
+Chapters are carried through either way, wherever the container can hold them.
 
 Two things to know:
 
@@ -49,16 +50,21 @@ Two things to know:
   iPhone clips, the text track MP4 uses for chapters — the chapters themselves
   are kept), cover art when the video is re-encoded, and attachments outside
   MKV. With video **Copy** cover art is passed through: MP4 keeps it as a
-  picture, MKV stores it as a one-frame video track and MOV drops it. Extra
-  audio tracks are copied as they are, so one the container cannot hold (an
-  AC-3 track into WebM) still aborts the run. MP3, FLAC and WAV hold exactly
+  picture, MKV stores it as a one-frame video track and MOV drops it. Audio
+  tracks after the first are copied as they are, so one the container cannot hold
+  (an AC-3 track into WebM) is refused before ffmpeg starts, naming the track;
+  the same goes for a copied first track. MP3, FLAC and WAV hold exactly
   one audio track, so they get the first; M4A keeps them all. GIF ignores the
   setting.
-- Subtitles are copied, not converted, so the container has to accept the codec.
-  MP4, MOV and M4V take `mov_text` but not SubRip; MKV takes SubRip but not
-  `mov_text`; WebM takes neither. Of the disc bitmap formats, PGS is rejected
-  by MP4, MOV and M4V, and VobSub by MOV and M4V (MP4 takes it). A mismatch
-  aborts the run — use MKV for disc remuxes.
+- SubRip, ASS, WebVTT and `mov_text` subtitles are converted to the format the container
+  holds, so they do not stop a run: `mov_text` for MP4, MOV and M4V, WebVTT for WebM, SubRip
+  for MKV (which keeps SubRip, ASS and WebVTT as they are, so styled ASS stays styled).
+  Converting to `mov_text`, WebVTT or SubRip drops ASS styling. Bitmap subtitles
+  cannot become text: PGS is kept by MKV only, and a file with a PGS track is
+  refused for the other containers before ffmpeg starts, naming the track — use
+  MKV for disc remuxes. Any other subtitle codec (VobSub, DVB, SAMI, …) is copied as it
+  is, and ffmpeg decides whether the container takes it; when it does not, the row shows
+  ffmpeg's own reason.
 - **Default subtitle** sets which subtitle track a player selects on its own. It
   needs *Keep all audio and subtitle tracks*, because without mapping there is at most one subtitle
   track to flag. Picking a language clears the *default* flag on every subtitle
@@ -67,8 +73,9 @@ Two things to know:
   matching that language — so a source shipping two "default" tracks does not
   carry the conflict through. The two ISO 639-2 codes some languages have
   (`ger`/`deu`, `fre`/`fra`) match each other. The MP4-family muxers re-enable the
-  first subtitle track when none is flagged, so *None* cannot clear it there.
-  Leave it on *Unchanged* to preserve whatever the source declared.
+  first subtitle track when none is flagged, so *None* would move the default to
+  that track instead of clearing it: it is offered for MKV and WebM only. Leave it
+  on *Unchanged* to preserve whatever the source declared.
 
 ### Lossless and HD audio
 
@@ -117,14 +124,17 @@ Both play back fine on the device that made them, but the moment such a clip
 is re-encoded without care — or just viewed on an SDR screen — the BT.2020
 pixels get interpreted as Rec.709 and the picture goes flat and grey.
 
-Recodec reads the video stream's transfer function when a file is loaded. If it
+Recodec reads the video's transfer function when a file is loaded, from the stream
+and from the first decoded frame (HLG can be signalled only inside the bitstream, where
+the stream entry never shows it). If it
 is PQ or HLG the **Tone map HDR to SDR** toggle (under **More options**) switches itself on, and the
 conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
 on VideoToolbox before encoding: H.264 and HEVC are decoded in hardware, other
 codecs by ffmpeg, and the frames are then uploaded to the GPU for the mapping
 step. The output is tagged Rec.709
 throughout and the HDR mastering / content light level metadata is stripped,
-so players do not re-flag it as HDR.
+so players do not re-flag it as HDR. The *ambient viewing environment* side data some
+iPhone clips carry is not an HDR flag and is left as it is.
 
 Notes:
 
@@ -139,8 +149,9 @@ Notes:
   subsampled on the way through, even when the output codec is 4:2:2 again, and
   an alpha channel is dropped.
 - It needs an ffmpeg that includes the `scale_vt` filter (the Homebrew build
-  does; check with `ffmpeg -filters | grep scale_vt`). Without it HDR conversions
-  fail with a generic error until the toggle is switched off.
+  does; check with `ffmpeg -filters | grep scale_vt`). Recodec asks ffmpeg for its
+  filters at launch; without `scale_vt` the toggle stays off and is disabled with a
+  note, and HDR files are converted without tone mapping.
 - If you mostly record for sharing, turn HDR off at the source instead:
   Screenshots app → Options → HDR, or iPhone Settings → Camera → Record Video →
   HDR Video.

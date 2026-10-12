@@ -167,6 +167,32 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.compatibilityTally, CompatibilityTally(ready: 1, total: 1))
     }
 
+    // MARK: - Verdict with no files loaded
+
+    private func emptyListVM(_ settings: ConversionSettings) -> ConversionViewModel {
+        let vm = ConversionViewModel(engine: FakeEngine(), probe: { _ in MediaInfo() },
+                                     toolsAvailable: true, fileExists: { _ in false })
+        vm.settings = settings
+        return vm
+    }
+
+    /// With Copy the verdict depends on the file, and there is none: promising "iPhone-ready" would
+    /// be a guess. What the settings decide on their own (the container, a re-encoded codec) still shows.
+    func testNoFilesNoVerdictWhileACodecIsCopy() {
+        for (video, audio) in [(VideoCodec.copy, AudioCodec.copy), (.hevc, .copy), (.copy, .aac)] {
+            let vm = emptyListVM(ConversionSettings(container: .mp4, videoCodec: video, audioCodec: audio, crf: 23))
+            XCTAssertNil(vm.verdictWithoutFiles, "\(video)/\(audio)")
+        }
+        let ready = emptyListVM(ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .aac, crf: 23))
+        XCTAssertEqual(ready.verdictWithoutFiles?.isCompatible, true)
+        // Copy does not hide what is already settled: Matroska and WebM never play on an iPhone.
+        let mkv = emptyListVM(ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .copy, crf: 23))
+        XCTAssertEqual(mkv.verdictWithoutFiles?.isCompatible, false)
+        XCTAssertEqual(mkv.verdictWithoutFiles?.reason, "MKV files don't play on iPhone")
+        let av1 = emptyListVM(ConversionSettings(container: .mp4, videoCodec: .av1, audioCodec: .copy, crf: 30))
+        XCTAssertEqual(av1.verdictWithoutFiles?.isCompatible, false)
+    }
+
     // MARK: - Codec compatibility pre-flight
 
     /// An invalid codec/container combo must set status to .failed and NOT invoke the engine.
@@ -189,6 +215,79 @@ final class ConversionViewModelTests: XCTestCase {
             return XCTFail("expected .failed, got \(vm.items[0].status)")
         }
         XCTAssertTrue(msg.contains("supported"), "failure message should mention 'supported'; got: \(msg)")
+    }
+
+    /// A file the codec lists accept but whose own tracks the container cannot hold is rejected
+    /// before ffmpeg runs, and says why; the rest of the batch still converts.
+    func testFileWithATrackTheContainerCannotHoldIsRejectedBeforeFfmpeg() async {
+        let engine = FakeEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { url in
+                MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac",
+                          subtitleLanguages: ["eng"],
+                          subtitleCodecs: [url.lastPathComponent == "disc.mkv" ? "hdmv_pgs_subtitle" : "subrip"])
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/disc.mkv"), URL(fileURLWithPath: "/plain.mkv")])
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .copy, audioCodec: .copy, crf: 23,
+                                         preserveAllStreams: true)
+
+        await vm.convertAll()
+
+        XCTAssertEqual(engine.convertCount, 1, "only the file that can be converted reaches ffmpeg")
+        guard case .failed(let message) = vm.items[0].status else {
+            return XCTFail("expected .failed, got \(vm.items[0].status)")
+        }
+        XCTAssertTrue(message.contains("PGS") && message.contains("MP4"), message)
+        guard case .done = vm.items[1].status else { return XCTFail("expected .done, got \(vm.items[1].status)") }
+    }
+
+    // MARK: - Failure message
+
+    final class FailingEngine: ConversionEngineProtocol {
+        let error: Error
+        init(_ error: Error) { self.error = error }
+        func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
+                     onProgress: @escaping (Double) -> Void) async throws { throw error }
+        func cancel() {}
+    }
+
+    private func failureMessage(stderr: String) async -> String? {
+        let vm = ConversionViewModel(
+            engine: FailingEngine(ConversionError.ffmpegFailed(code: 234, stderrHead: stderr)),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mkv")])
+        await vm.convertAll()
+        guard case .failed(let message) = vm.items[0].status else { return nil }
+        return message
+    }
+
+    /// ffmpeg ends every failed run with "Conversion failed!" and the cause is logged first,
+    /// followed by its consequences. The badge showed that last line, which says nothing.
+    func testFailureShowsTheCauseNotFfmpegsClosingLine() async {
+        let stderr = """
+        [mp4 @ 0x13f00a280] Could not find tag for codec subrip in stream #2, codec not currently supported in container
+        [out#0/mp4 @ 0x13f00c300] Could not write header (incorrect codec parameters ?): Invalid argument
+        [out#0/mp4 @ 0x13f00c300] Nothing was written into output file, because at least one of its streams received no packets.
+        Conversion failed!
+
+        """
+        let message = await failureMessage(stderr: stderr)
+        XCTAssertEqual(message, "Could not find tag for codec subrip in stream #2, codec not currently supported in container")
+    }
+
+    func testFailureWithoutLoggerPrefixKeepsTheWholeLine() async {
+        let message = await failureMessage(stderr: "Error opening input file /a.mkv.\nError opening input files: No such file or directory\n")
+        XCTAssertEqual(message, "Error opening input file /a.mkv.")
+    }
+
+    func testFailureWithEmptyStderrStillSaysSomething() async {
+        let message = await failureMessage(stderr: "")
+        XCTAssertEqual(message, "ffmpeg failed")
     }
 
     // MARK: - containerChanged / videoCodecChanged
@@ -225,6 +324,32 @@ final class ConversionViewModelTests: XCTestCase {
                        "h264 is valid for mkv; codec must not change")
         XCTAssertEqual(vm.settings.crf, 18,
                        "CRF must not reset when the video codec stays valid after a container switch")
+    }
+
+    /// "None" is not offered for MP4, MOV and M4V (their muxers cannot clear the default track), so
+    /// a stale choice made under Matroska must not travel with the user into them.
+    func testContainerChangeDropsANoneSubtitleDefaultTheNewContainerCannotHonour() {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo() },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        for container in [Container.mp4, .mov, .m4v] {
+            vm.settings = ConversionSettings(container: container, videoCodec: .h264, audioCodec: .aac, crf: 23,
+                                             subtitleDefault: .none)
+            vm.containerChanged()
+            XCTAssertEqual(vm.settings.subtitleDefault, .unchanged, "\(container)")
+        }
+        for container in [Container.mkv, .webm] {
+            vm.settings = ConversionSettings(container: container, videoCodec: .vp9, audioCodec: .opus, crf: 31,
+                                             subtitleDefault: .none)
+            vm.containerChanged()
+            XCTAssertEqual(vm.settings.subtitleDefault, .none, "\(container) clears the flag for real")
+        }
+        vm.settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23,
+                                         subtitleDefault: .language("ger"))
+        vm.containerChanged()
+        XCTAssertEqual(vm.settings.subtitleDefault, .language("ger"), "a language works in every container")
     }
 
     func testVideoCodecChangeClearsHardwareWhenUnsupported() {
@@ -327,9 +452,42 @@ final class ConversionViewModelTests: XCTestCase {
     // MARK: - Source-aware default audio codec
 
     func testRecommendedAudioCodec() {
-        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: "aac")), .copy)
-        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: "mp3")), .aac)
-        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: nil)), .aac)
+        func recommended(_ codec: String?, _ container: Container) -> AudioCodec {
+            ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: codec), container: container)
+        }
+        XCTAssertEqual(recommended("aac", .mp4), .copy)
+        XCTAssertEqual(recommended("mp3", .mp4), .aac)
+        XCTAssertEqual(recommended(nil, .mp4), .aac)
+    }
+
+    /// AAC cannot be copied into WebM, MP3 or FLAC, and has no encoder there either: a fresh load
+    /// picked AAC for a target that rejects it, and every file failed preflight.
+    func testRecommendedAudioCodecIsOneTheContainerHolds() {
+        func recommended(_ codec: String?, _ container: Container) -> AudioCodec {
+            ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: codec), container: container)
+        }
+        XCTAssertEqual(recommended("aac", .webm), .opus)
+        XCTAssertEqual(recommended("mp3", .webm), .opus)
+        XCTAssertEqual(recommended("aac", .mp3), .mp3)
+        XCTAssertEqual(recommended("aac", .flac), .flac)
+        for container in Container.allCases where container != .gif {
+            for codec in ["aac", "mp3", "flac", "opus", "ac3", nil] {
+                XCTAssertTrue(CodecCompatibility.audioCodecs(for: container).contains(recommended(codec, container)),
+                              "\(codec ?? "nil") source into \(container)")
+            }
+        }
+    }
+
+    func testFreshLoadIntoAContainerThatCannotHoldAACPicksOneThatCan() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings = ConversionSettings(container: .webm, videoCodec: .vp9, audioCodec: .opus, crf: 31)
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mp4")])
+        XCTAssertEqual(vm.settings.audioCodec, .opus)
+        XCTAssertTrue(CodecCompatibility.isValidCombo(vm.settings))
     }
 
     func testFreshLoadSetsAudioDefaultFromSource() async {
@@ -427,6 +585,20 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
         XCTAssertTrue(vm.settings.toneMapHDR)
         XCTAssertTrue(vm.hasHDRSource)
+    }
+
+    /// Without `scale_vt` every tone-mapped run fails, so the toggle is not switched on for the user.
+    func testHDRSourceDoesNotEnableToneMapWhenFfmpegCannotDoIt() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                    colorTransfer: "smpte2084") },
+            toolsAvailable: true,
+            toneMapAvailable: false,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.hasHDRSource, "the file is still recognised as HDR")
+        XCTAssertFalse(vm.settings.toneMapHDR)
     }
 
     func testLoadingSDRSourceLeavesToneMapAlone() async {

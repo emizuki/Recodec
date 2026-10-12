@@ -244,4 +244,153 @@ final class CodecCompatibilityTests: XCTestCase {
         // A codec without a bitrate keeps the whole list.
         XCTAssertEqual(CodecCompatibility.audioBitrateOptions(for: .flac, channels: .stereo), AudioBitrate.presets)
     }
+
+    // MARK: - Per-file problems the codec lists cannot see
+
+    private func keepAll(_ container: Container, video: VideoCodec = .copy, audio: AudioCodec = .copy) -> ConversionSettings {
+        var s = ConversionSettings(container: container, videoCodec: video, audioCodec: audio, crf: 20)
+        s.preserveAllStreams = true
+        return s
+    }
+
+    /// Bitmap subtitles cannot become text, and only Matroska keeps PGS (measured on ffmpeg 9.0.2:
+    /// MP4, MOV, M4V and WebM abort with "codec not currently supported in container").
+    func testPGSSubtitlesBlockEveryContainerButMatroska() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng", "ger"], subtitleCodecs: ["subrip", "hdmv_pgs_subtitle"])
+        for container in [Container.mp4, .mov, .m4v, .webm] {
+            let problem = CodecCompatibility.sourceProblem(keepAll(container), source: source)
+            XCTAssertNotNil(problem, "\(container)")
+            XCTAssertTrue(problem?.contains("track 2") == true && problem?.contains("PGS") == true, "\(container): \(problem ?? "nil")")
+        }
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mkv), source: source))
+    }
+
+    func testTextSubtitlesAreNeverAProblemBecauseTheyAreConverted() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng", "ger", "fre"], subtitleCodecs: ["subrip", "ass", "mov_text"])
+        for container in [Container.mp4, .mov, .m4v, .webm, .mkv] {
+            XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(container), source: source), "\(container)")
+        }
+    }
+
+    func testSubtitlesAreNotMappedWithoutKeepAllSoTheyCannotBlock() {
+        var s = keepAll(.mp4)
+        s.preserveAllStreams = false
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng"], subtitleCodecs: ["hdmv_pgs_subtitle"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source))
+    }
+
+    /// The file row shows a reason in two lines of 240 pt of caption text and cuts the rest: the
+    /// first version of these messages lost "...turn off Keep all tracks" at about 95 characters,
+    /// which is the part that says what to do. Keep every one well under that.
+    func testEveryPerFileReasonFitsTheTwoLineRow() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "truehd",
+                               audioCodecs: ["truehd", "eac3", "flac", "opus", "ac3", "dts"],
+                               subtitleLanguages: ["eng"], subtitleCodecs: ["hdmv_pgs_subtitle"])
+        var withoutSubtitles = source
+        withoutSubtitles.subtitleCodecs = []
+        var messages: [String] = []
+        for container in Container.allCases where container != .gif {
+            for audio in [AudioCodec.copy, .aac] {
+                let s = keepAll(container, video: .copy, audio: audio)
+                // One run reaches the subtitle reason, the other the audio one.
+                messages.append(CodecCompatibility.sourceProblem(s, source: source) ?? "")
+                messages.append(CodecCompatibility.sourceProblem(s, source: withoutSubtitles) ?? "")
+            }
+        }
+        let reasons = messages.filter { !$0.isEmpty }
+        XCTAssertGreaterThan(reasons.count, 10, "the matrix must actually produce reasons")
+        for reason in reasons {
+            XCTAssertLessThanOrEqual(reason.count, 85, reason)
+        }
+    }
+
+    func testAnExtraAudioTrackTheContainerCannotHoldBlocksTheFile() {
+        // Only the first track is re-encoded; the others are copied as they are.
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac", audioCodecs: ["aac", "ac3"])
+        let webm = CodecCompatibility.sourceProblem(keepAll(.webm, video: .vp9, audio: .opus), source: source)
+        XCTAssertTrue(webm?.contains("track 2") == true && webm?.contains("AC-3") == true && webm?.contains("WEBM") == true,
+                      webm ?? "nil")
+        // MP4 and MKV hold AC-3; M4V (the `ipod` muxer) refuses E-AC-3.
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .aac), source: source))
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mkv, video: .h264, audio: .aac), source: source))
+        let eac3 = MediaInfo(videoCodecName: "h264", audioCodecName: "aac", audioCodecs: ["aac", "eac3"])
+        XCTAssertNotNil(CodecCompatibility.sourceProblem(keepAll(.m4v, video: .h264, audio: .aac), source: eac3))
+    }
+
+    func testTheReEncodedFirstAudioTrackNeverBlocks() {
+        // TrueHD cannot go into MP4, but track 1 is turned into AAC; track 2 (AAC) is fine.
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "truehd", audioCodecs: ["truehd", "aac"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .aac), source: source))
+        // Copied instead, it is the problem, and turning Keep all off would not help: say so.
+        let copied = CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .copy), source: source)
+        XCTAssertTrue(copied?.contains("track 1") == true && copied?.contains("TrueHD") == true, copied ?? "nil")
+        XCTAssertFalse(copied?.contains("turn off") == true, copied ?? "nil")
+    }
+
+    func testNoAudioMeansNoAudioProblem() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "ac3", audioCodecs: ["ac3", "ac3"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.webm, video: .vp9, audio: .none), source: source))
+    }
+
+    func testAudioOnlyContainersWithOneTrackOnlyLookAtTheFirstTrack() {
+        // MP3, FLAC and WAV hold one audio stream: the builder maps `0:a:0`, so a second track is never copied.
+        let source = MediaInfo(audioCodecName: "mp3", audioCodecs: ["mp3", "ac3"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp3, video: .none, audio: .copy), source: source))
+        // M4A takes every track, and refuses E-AC-3.
+        let eac3 = MediaInfo(audioCodecName: "aac", audioCodecs: ["aac", "eac3"])
+        XCTAssertNotNil(CodecCompatibility.sourceProblem(keepAll(.m4a, video: .none, audio: .aac), source: eac3))
+    }
+
+    /// The copy table is a record of what ffmpeg does, so it is checked against ffmpeg: every
+    /// codec into every container, stream copy of a one-second sine. Any ffmpeg release that starts
+    /// to accept (or refuse) a pair fails here instead of in front of a user.
+    func testAudioCopyTableMatchesFfmpeg() throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let encoders: [(codec: String, args: [String])] = [
+            ("aac", ["-c:a", "aac"]), ("ac3", ["-c:a", "ac3"]), ("eac3", ["-c:a", "eac3"]),
+            ("alac", ["-c:a", "alac"]), ("flac", ["-c:a", "flac"]), ("mp3", ["-c:a", "libmp3lame"]),
+            ("opus", ["-c:a", "libopus"]), ("pcm_s16le", ["-c:a", "pcm_s16le"]), ("mp2", ["-c:a", "mp2"]),
+            ("dts", ["-c:a", "dca", "-strict", "-2"]), ("truehd", ["-c:a", "truehd", "-strict", "-2", "-ar", "48000"]),
+            // ffmpeg's native Vorbis encoder is experimental and stereo only; the table claims WebM takes it.
+            ("vorbis", ["-c:a", "vorbis", "-strict", "-2", "-ac", "2"]),
+        ]
+        func ffmpeg(_ args: [String]) throws -> Bool {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+            p.arguments = ["-hide_banner", "-loglevel", "quiet", "-y"] + args
+            try p.run(); p.waitUntilExit()
+            return p.terminationStatus == 0
+        }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let token = UUID().uuidString
+        // One source per codec, then every (codec, container) copy attempt in parallel: each is a
+        // separate ffmpeg process and there are about a hundred of them.
+        var sources: [(codec: String, url: URL)] = []
+        defer { sources.forEach { try? FileManager.default.removeItem(at: $0.url) } }
+        for encoder in encoders {
+            let source = dir.appendingPathComponent("copy-\(token)-\(encoder.codec).mkv")
+            sources.append((encoder.codec, source))
+            // A codec this ffmpeg cannot encode produces no file and is skipped below.
+            _ = try ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"] + encoder.args + [source.path])
+        }
+        let jobs = sources.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            .flatMap { source in Container.allCases.filter { $0 != .gif }.map { (source, $0) } }
+        if jobs.isEmpty { throw XCTSkip("this ffmpeg builds none of the audio encoders") }
+        var accepted = [Bool](repeating: false, count: jobs.count)
+        accepted.withUnsafeMutableBufferPointer { results in
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { i in
+                let (source, container) = jobs[i]
+                let output = dir.appendingPathComponent("copy-\(token)-\(i).\(container.fileExtension)")
+                defer { try? FileManager.default.removeItem(at: output) }
+                results[i] = (try? ffmpeg(["-i", source.url.path, "-map", "0:a:0", "-c:a", "copy", output.path])) ?? false
+            }
+        }
+        for (i, (source, container)) in jobs.enumerated() {
+            XCTAssertEqual(CodecCompatibility.canCopyAudio(source.codec, into: container), accepted[i],
+                           "\(source.codec) into \(container): ffmpeg \(accepted[i] ? "accepts" : "refuses") it")
+        }
+    }
 }

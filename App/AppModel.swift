@@ -13,7 +13,8 @@ final class AppModel {
             viewModel = ConversionViewModel(
                 engine: FFmpegConversionEngine(ffmpeg: tools.ffmpeg),
                 probe: { try await probe.probe($0) },
-                toolsAvailable: true)
+                toolsAvailable: true,
+                toneMapAvailable: tools.hasFilter("scale_vt"))
         } else {
             viewModel = ConversionViewModel(
                 engine: NoopEngine(),

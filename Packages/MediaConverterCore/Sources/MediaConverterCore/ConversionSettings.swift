@@ -203,10 +203,20 @@ public enum SubtitleDefault: Sendable, Equatable, Hashable {
     /// Clear `default` on every subtitle track.
     case none
 
-    public static let presets: [SubtitleDefault] = [
+    private static let allPresets: [SubtitleDefault] = [
         .unchanged, .none, .language("eng"), .language("ger"),
         .language("fre"), .language("spa"), .language("ita"),
     ]
+
+    /// The choices worth offering for `container`. The MP4-family muxers re-enable the first subtitle
+    /// track when none is flagged (measured on ffmpeg 9.0.2), so there "None" does not clear the
+    /// default: it moves it to the first track. Matroska and WebM clear it for real.
+    public static func presets(for container: Container) -> [SubtitleDefault] {
+        switch container {
+        case .mp4, .mov, .m4v: return allPresets.filter { $0 != .none }
+        default:               return allPresets
+        }
+    }
 
     /// ISO 639-2 gives 20 languages two codes: a bibliographic (B) one and a terminology (T)
     /// one. MKV usually carries B (`ger`), MP4 and many encoders write T (`deu`), and both
@@ -313,9 +323,16 @@ extension ConversionSettings {
 }
 
 extension ConversionSettings {
-    /// Audio codec to default to for a freshly-loaded source: Copy when the source audio is
-    /// already AAC (avoid a needless re-encode), otherwise AAC.
-    public static func recommendedAudioCodec(forSource source: MediaInfo) -> AudioCodec {
-        source.audioCodecName == "aac" ? .copy : .aac
+    /// Audio codec to default to for a freshly-loaded source, among those `container` holds: Copy when
+    /// the source audio is already AAC and the container can carry it (avoid a needless re-encode),
+    /// otherwise AAC, otherwise the container's own first encoder (Opus for WebM, MP3 for MP3, ...).
+    public static func recommendedAudioCodec(forSource source: MediaInfo, container: Container) -> AudioCodec {
+        let valid = CodecCompatibility.audioCodecs(for: container)
+        if source.audioCodecName == "aac", valid.contains(.copy),
+           CodecCompatibility.canCopyAudio("aac", into: container) {
+            return .copy
+        }
+        if valid.contains(.aac) { return .aac }
+        return valid.first { $0 != .copy && $0 != .none } ?? .aac
     }
 }

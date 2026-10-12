@@ -29,6 +29,9 @@ public final class ConversionViewModel: ObservableObject {
     @Published public var settings: ConversionSettings = .iPhoneDefault
     @Published public var isConverting: Bool = false
     public let toolsAvailable: Bool
+    /// Whether the located ffmpeg has the `scale_vt` filter tone mapping needs. Without it the
+    /// toggle is never switched on automatically (every run would fail) and the UI disables it.
+    public let toneMapAvailable: Bool
 
     private let engine: ConversionEngineProtocol
     private let probe: (URL) async throws -> MediaInfo
@@ -38,10 +41,12 @@ public final class ConversionViewModel: ObservableObject {
     public init(engine: ConversionEngineProtocol,
                 probe: @escaping (URL) async throws -> MediaInfo,
                 toolsAvailable: Bool,
+                toneMapAvailable: Bool = true,
                 fileExists: @escaping (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) {
         self.engine = engine
         self.probe = probe
         self.toolsAvailable = toolsAvailable
+        self.toneMapAvailable = toneMapAvailable
         self.fileExists = fileExists
     }
 
@@ -57,6 +62,15 @@ public final class ConversionViewModel: ObservableObject {
     public var compatibilityTally: CompatibilityTally {
         let verdicts = items.compactMap { compatibility(for: $0) }
         return CompatibilityTally(ready: verdicts.filter(\.isCompatible).count, total: verdicts.count)
+    }
+
+    /// The footer's verdict while no file is loaded: what the settings decide on their own. With a
+    /// Copy codec the answer depends on a file that is not there, so a positive verdict is withheld
+    /// (nil) rather than guessed; a negative one (Matroska, AV1, Opus, ...) holds whatever is loaded.
+    public var verdictWithoutFiles: IPhoneCompatibility? {
+        let verdict = IPhoneCompatibilityChecker.evaluate(settings, source: MediaInfo())
+        let copiesSomething = settings.videoCodec == .copy || settings.audioCodec == .copy
+        return verdict.isCompatible && copiesSomething ? nil : verdict
     }
 
     public func loadFiles(_ urls: [URL]) async {
@@ -75,7 +89,7 @@ public final class ConversionViewModel: ObservableObject {
                 // the list can change meanwhile (overlapping loads, Remove, Clear All), and
                 // a user who turned it off with an HDR file loaded must not see it flip
                 // back on. Never switched off automatically.
-                if info.isHDR && !hasHDRSource { settings.toneMapHDR = true }
+                if info.isHDR && !hasHDRSource && toneMapAvailable { settings.toneMapHDR = true }
                 items[index].info = info
                 items[index].status = .ready
             } catch {
@@ -85,7 +99,7 @@ public final class ConversionViewModel: ObservableObject {
         }
         // On a fresh load (list was empty), default the audio codec from the first source.
         if wasEmpty, let first = items.compactMap({ $0.info }).first {
-            settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
+            settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first, container: settings.container)
             // Copy/None accept only `.source` channels; a stale Stereo/5.1 pick would
             // otherwise fail the combo check for every file in the batch.
             audioCodecChanged()
@@ -112,6 +126,11 @@ public final class ConversionViewModel: ObservableObject {
                 items[index].status = .failed("This codec/container combination isn't supported")
                 continue
             }
+            // A track of this file the container cannot hold: say which, instead of letting ffmpeg abort.
+            if let problem = CodecCompatibility.sourceProblem(settings, source: info) {
+                items[index].status = .failed(problem)
+                continue
+            }
             let input = items[index].url
             let output = OutputNamer.outputURL(forInput: input, container: settings.container, fileExists: fileExists)
             items[index].status = .converting
@@ -125,7 +144,7 @@ public final class ConversionViewModel: ObservableObject {
             } catch ConversionError.cancelled {
                 items[index].status = .failed("Cancelled")
             } catch {
-                items[index].status = .failed(Self.message(for: error))
+                items[index].status = .failed(error.localizedDescription)
             }
         }
     }
@@ -142,6 +161,11 @@ public final class ConversionViewModel: ObservableObject {
         let validAudio = CodecCompatibility.audioCodecs(for: settings.container)
         if !validAudio.contains(settings.audioCodec) {
             if let first = validAudio.first { settings.audioCodec = first }
+        }
+        // A stale "None" from Matroska would otherwise ride along into a muxer that cannot honour it.
+        if settings.subtitleDefault == .none,
+           !SubtitleDefault.presets(for: settings.container).contains(.none) {
+            settings.subtitleDefault = .unchanged
         }
         audioCodecChanged()
     }
@@ -211,12 +235,5 @@ public final class ConversionViewModel: ObservableObject {
     private func updateProgress(at index: Int, to fraction: Double) {
         guard items.indices.contains(index) else { return }
         items[index].progress = fraction
-    }
-
-    private static func message(for error: Error) -> String {
-        if case ConversionError.ffmpegFailed(_, let tail) = error {
-            return tail.split(separator: "\n").last.map(String.init) ?? "ffmpeg failed"
-        }
-        return error.localizedDescription
     }
 }

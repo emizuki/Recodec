@@ -5,6 +5,7 @@ public enum FFprobeParser {
         struct Tags: Decodable { let language: String? }
         struct Disposition: Decodable { let `default`: Int? }
         struct Stream: Decodable {
+            let index: Int?
             let codec_type: String?
             let codec_name: String?
             let color_transfer: String?
@@ -15,6 +16,15 @@ public enum FFprobeParser {
         struct Format: Decodable { let duration: String? }
         let streams: [Stream]?
         let format: Format?
+    }
+
+    private struct FrameProbe: Decodable {
+        struct Frame: Decodable {
+            let stream_index: Int?
+            let media_type: String?
+            let color_transfer: String?
+        }
+        let frames: [Frame]?
     }
 
     /// The audio stream ffmpeg selects when nothing is mapped (ffmpeg's `map_auto_audio`). Its score
@@ -32,22 +42,38 @@ public enum FFprobeParser {
         return best?.stream
     }
 
-    public static func parse(_ data: Data) throws -> MediaInfo {
+    /// `firstVideoFrame` is ffprobe's `-show_frames` JSON for the first video stream alone (see
+    /// `MediaProbe`); it is separate because `-select_streams` would also hide the other streams from
+    /// the stream listing this reads everything else from.
+    public static func parse(_ data: Data, firstVideoFrame frameData: Data? = nil) throws -> MediaInfo {
         let probe = try JSONDecoder().decode(Probe.self, from: data)
-        let videoStream = probe.streams?.first { $0.codec_type == "video" }
+        // The first video stream, and its position: `-show_frames` names the stream by index.
+        let firstVideo = probe.streams?.enumerated().first { $0.element.codec_type == "video" }
+        let videoStream = firstVideo?.element
         let video = videoStream?.codec_name
+        // The decoded frame's transfer function beats the stream's: HLG can be signalled only by an
+        // alternative-transfer SEI in the bitstream, which the stream entry never shows. No frame (an
+        // audio-only file, or one that could not be decoded) leaves the stream-level value.
+        let videoIndex = firstVideo.map { $0.element.index ?? $0.offset }
+        let frames = try frameData.flatMap { try JSONDecoder().decode(FrameProbe.self, from: $0).frames }
+        let frameTransfer = frames?
+            .first { $0.media_type == "video" && $0.stream_index == videoIndex }?
+            .color_transfer
+        let colorTransfer = frameTransfer ?? videoStream?.color_transfer
         let audioStreams = probe.streams?.filter { $0.codec_type == "audio" } ?? []
         let audioStream = audioStreams.first
         let audio = audioStream?.codec_name
         let duration = probe.format?.duration.flatMap(Double.init)
         // Subtitle order here must match ffmpeg's own `-disposition:s:<n>` index,
         // so keep untagged streams in place as empty strings rather than dropping them.
-        let subtitles = probe.streams?
-            .filter { $0.codec_type == "subtitle" }
-            .map { $0.tags?.language ?? "" } ?? []
+        let subtitleStreams = probe.streams?.filter { $0.codec_type == "subtitle" } ?? []
+        let subtitles = subtitleStreams.map { $0.tags?.language ?? "" }
+        let subtitleCodecs = subtitleStreams.map { $0.codec_name ?? "" }
         return MediaInfo(durationSeconds: duration, videoCodecName: video,
-                         audioCodecName: audio, subtitleLanguages: subtitles,
-                         colorTransfer: videoStream?.color_transfer,
+                         audioCodecName: audio, audioCodecs: audioStreams.map { $0.codec_name ?? "" },
+                         subtitleLanguages: subtitles,
+                         subtitleCodecs: subtitleCodecs,
+                         colorTransfer: colorTransfer,
                          audioChannels: autoSelectedAudio(audioStreams)?.channels,
                          firstAudioChannels: audioStream?.channels)
     }
