@@ -63,7 +63,8 @@ public enum FFprobeParser {
         let subtitles = subtitleStreams.map { $0.tags?.language ?? "" }
         let subtitleCodecs = subtitleStreams.map { $0.codec_name ?? "" }
         return MediaInfo(durationSeconds: duration, videoCodecName: video,
-                         audioCodecName: audio, subtitleLanguages: subtitles,
+                         audioCodecName: audio, audioCodecs: audioStreams.map { $0.codec_name ?? "" },
+                         subtitleLanguages: subtitles,
                          subtitleCodecs: subtitleCodecs,
                          colorTransfer: colorTransfer,
                          audioChannels: autoSelectedAudio(audioStreams)?.channels,

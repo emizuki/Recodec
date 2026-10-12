@@ -74,20 +74,67 @@ public enum CodecCompatibility {
         }
     }
 
+    /// Whether stream copy of an audio track of `codec` (ffprobe's name) into `container` works.
+    /// Measured against ffmpeg 9.0.2, one codec at a time (`testAudioCopyTableMatchesFfmpeg` repeats
+    /// the measurement): MKV takes everything; MP4 everything but TrueHD (experimental); MOV
+    /// additionally refuses FLAC and Opus; M4V and M4A (the `ipod` muxer) hold only AAC, AC-3 and
+    /// ALAC; WebM only Opus and Vorbis; MP3 and FLAC only their own codec; WAV takes everything but
+    /// ALAC, Opus and TrueHD. Codecs outside the measured set are assumed to work.
+    public static func canCopyAudio(_ codec: String, into container: Container) -> Bool {
+        switch container {
+        case .mkv:        return true
+        case .mp4:        return codec != "truehd"
+        case .mov:        return !["flac", "opus", "truehd"].contains(codec)
+        case .m4v, .m4a:  return ["aac", "ac3", "alac"].contains(codec)
+        case .webm:       return ["opus", "vorbis"].contains(codec)
+        case .mp3:        return codec == "mp3"
+        case .flac:       return codec == "flac"
+        case .wav:        return !["alac", "opus", "truehd"].contains(codec)
+        case .gif:        return false
+        }
+    }
+
     private static func displayName(ofCodec codec: String) -> String {
-        ["hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub"][codec] ?? codec.uppercased()
+        let names = ["hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub", "ac3": "AC-3", "eac3": "E-AC-3",
+                     "truehd": "TrueHD", "dts": "DTS", "alac": "ALAC", "opus": "Opus"]
+        if codec.hasPrefix("pcm_") { return "PCM" }
+        return names[codec] ?? codec.uppercased()
     }
 
     /// Why this file cannot be converted with these settings although the codec lists accept them:
     /// a track of its own that the target container cannot hold. nil when nothing stands in the way.
     /// Only checked with every stream kept; otherwise ffmpeg picks its own streams.
     public static func sourceProblem(_ settings: ConversionSettings, source: MediaInfo) -> String? {
-        guard settings.preserveAllStreams, settings.container.supportsSubtitles else { return nil }
-        let target = settings.container.fileExtension.uppercased()
-        let advice = "Use MKV, or turn off Keep all audio and subtitle tracks."
-        for (index, codec) in source.subtitleCodecs.enumerated()
-        where subtitleHandling(for: codec, in: settings.container) == .unsupported {
-            return "Subtitle track \(index + 1) (\(displayName(ofCodec: codec))) can't go into \(target). \(advice)"
+        guard settings.preserveAllStreams, settings.container != .gif else { return nil }
+        let container = settings.container
+        let target = container.fileExtension.uppercased()
+
+        if container.supportsSubtitles {
+            for (index, codec) in source.subtitleCodecs.enumerated()
+            where subtitleHandling(for: codec, in: container) == .unsupported {
+                return "Subtitle track \(index + 1) (\(displayName(ofCodec: codec))) can't go into \(target). "
+                    + "Use MKV, or turn off Keep all audio and subtitle tracks."
+            }
+        }
+
+        // Audio that is copied rather than re-encoded: every track with Copy, every track but the
+        // first otherwise (see `ArgumentBuilder`: `-c:a copy -c:a:0 <encoder>`). MP3, FLAC and WAV
+        // hold one audio stream, so only the first track is mapped at all.
+        let mapped = [Container.mp3, .flac, .wav].contains(container)
+            ? Array(source.audioCodecs.prefix(1)) : source.audioCodecs
+        let firstCopiedTrack: Int
+        switch settings.audioCodec {
+        case .none: return nil
+        case .copy: firstCopiedTrack = 0
+        default:    firstCopiedTrack = 1
+        }
+        for (index, codec) in mapped.enumerated()
+        where index >= firstCopiedTrack && !canCopyAudio(codec, into: container) {
+            let what = "Audio track \(index + 1) (\(displayName(ofCodec: codec))) can't be copied into \(target)."
+            // A copied first track is the user's own choice; turning Keep all off would not change it.
+            return index == 0
+                ? "\(what) Choose another audio codec, or use MKV."
+                : "\(what) Use MKV, or turn off Keep all audio and subtitle tracks."
         }
         return nil
     }

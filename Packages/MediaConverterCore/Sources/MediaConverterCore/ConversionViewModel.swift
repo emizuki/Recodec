@@ -85,7 +85,7 @@ public final class ConversionViewModel: ObservableObject {
         }
         // On a fresh load (list was empty), default the audio codec from the first source.
         if wasEmpty, let first = items.compactMap({ $0.info }).first {
-            settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first)
+            settings.audioCodec = ConversionSettings.recommendedAudioCodec(forSource: first, container: settings.container)
             // Copy/None accept only `.source` channels; a stale Stereo/5.1 pick would
             // otherwise fail the combo check for every file in the batch.
             audioCodecChanged()

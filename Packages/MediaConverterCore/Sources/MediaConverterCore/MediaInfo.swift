@@ -4,6 +4,9 @@ public struct MediaInfo: Sendable, Equatable {
     public var durationSeconds: Double?
     public var videoCodecName: String?
     public var audioCodecName: String?
+    /// ffprobe `codec_name` of every audio stream, in source order (the first is `audioCodecName`).
+    /// Empty when unknown.
+    public var audioCodecs: [String]
     /// ISO 639-2 language tag of every subtitle stream, in source order.
     /// Streams with no language tag appear as an empty string so the indices
     /// stay aligned with ffmpeg's `-disposition:s:<n>` numbering.
@@ -24,13 +27,14 @@ public struct MediaInfo: Sendable, Equatable {
     public var firstAudioChannels: Int?
 
     public init(durationSeconds: Double? = nil, videoCodecName: String? = nil,
-                audioCodecName: String? = nil, subtitleLanguages: [String] = [],
-                subtitleCodecs: [String] = [],
+                audioCodecName: String? = nil, audioCodecs: [String] = [],
+                subtitleLanguages: [String] = [], subtitleCodecs: [String] = [],
                 colorTransfer: String? = nil, audioChannels: Int? = nil,
                 firstAudioChannels: Int? = nil) {
         self.durationSeconds = durationSeconds
         self.videoCodecName = videoCodecName
         self.audioCodecName = audioCodecName
+        self.audioCodecs = audioCodecs
         self.subtitleLanguages = subtitleLanguages
         self.subtitleCodecs = subtitleCodecs
         self.colorTransfer = colorTransfer

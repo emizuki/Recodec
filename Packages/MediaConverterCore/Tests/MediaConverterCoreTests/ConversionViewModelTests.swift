@@ -400,9 +400,42 @@ final class ConversionViewModelTests: XCTestCase {
     // MARK: - Source-aware default audio codec
 
     func testRecommendedAudioCodec() {
-        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: "aac")), .copy)
-        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: "mp3")), .aac)
-        XCTAssertEqual(ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: nil)), .aac)
+        func recommended(_ codec: String?, _ container: Container) -> AudioCodec {
+            ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: codec), container: container)
+        }
+        XCTAssertEqual(recommended("aac", .mp4), .copy)
+        XCTAssertEqual(recommended("mp3", .mp4), .aac)
+        XCTAssertEqual(recommended(nil, .mp4), .aac)
+    }
+
+    /// AAC cannot be copied into WebM, MP3 or FLAC, and has no encoder there either: a fresh load
+    /// picked AAC for a target that rejects it, and every file failed preflight.
+    func testRecommendedAudioCodecIsOneTheContainerHolds() {
+        func recommended(_ codec: String?, _ container: Container) -> AudioCodec {
+            ConversionSettings.recommendedAudioCodec(forSource: MediaInfo(audioCodecName: codec), container: container)
+        }
+        XCTAssertEqual(recommended("aac", .webm), .opus)
+        XCTAssertEqual(recommended("mp3", .webm), .opus)
+        XCTAssertEqual(recommended("aac", .mp3), .mp3)
+        XCTAssertEqual(recommended("aac", .flac), .flac)
+        for container in Container.allCases where container != .gif {
+            for codec in ["aac", "mp3", "flac", "opus", "ac3", nil] {
+                XCTAssertTrue(CodecCompatibility.audioCodecs(for: container).contains(recommended(codec, container)),
+                              "\(codec ?? "nil") source into \(container)")
+            }
+        }
+    }
+
+    func testFreshLoadIntoAContainerThatCannotHoldAACPicksOneThatCan() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings = ConversionSettings(container: .webm, videoCodec: .vp9, audioCodec: .opus, crf: 31)
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mp4")])
+        XCTAssertEqual(vm.settings.audioCodec, .opus)
+        XCTAssertTrue(CodecCompatibility.isValidCombo(vm.settings))
     }
 
     func testFreshLoadSetsAudioDefaultFromSource() async {

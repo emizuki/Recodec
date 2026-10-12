@@ -313,9 +313,16 @@ extension ConversionSettings {
 }
 
 extension ConversionSettings {
-    /// Audio codec to default to for a freshly-loaded source: Copy when the source audio is
-    /// already AAC (avoid a needless re-encode), otherwise AAC.
-    public static func recommendedAudioCodec(forSource source: MediaInfo) -> AudioCodec {
-        source.audioCodecName == "aac" ? .copy : .aac
+    /// Audio codec to default to for a freshly-loaded source, among those `container` holds: Copy when
+    /// the source audio is already AAC and the container can carry it (avoid a needless re-encode),
+    /// otherwise AAC, otherwise the container's own first encoder (Opus for WebM, MP3 for MP3, ...).
+    public static func recommendedAudioCodec(forSource source: MediaInfo, container: Container) -> AudioCodec {
+        let valid = CodecCompatibility.audioCodecs(for: container)
+        if source.audioCodecName == "aac", valid.contains(.copy),
+           CodecCompatibility.canCopyAudio("aac", into: container) {
+            return .copy
+        }
+        if valid.contains(.aac) { return .aac }
+        return valid.first { $0 != .copy && $0 != .none } ?? .aac
     }
 }

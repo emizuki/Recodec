@@ -281,4 +281,89 @@ final class CodecCompatibilityTests: XCTestCase {
                                subtitleLanguages: ["eng"], subtitleCodecs: ["hdmv_pgs_subtitle"])
         XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source))
     }
+
+    func testAnExtraAudioTrackTheContainerCannotHoldBlocksTheFile() {
+        // Only the first track is re-encoded; the others are copied as they are.
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac", audioCodecs: ["aac", "ac3"])
+        let webm = CodecCompatibility.sourceProblem(keepAll(.webm, video: .vp9, audio: .opus), source: source)
+        XCTAssertTrue(webm?.contains("track 2") == true && webm?.contains("AC-3") == true && webm?.contains("WEBM") == true,
+                      webm ?? "nil")
+        // MP4 and MKV hold AC-3; M4V (the `ipod` muxer) refuses E-AC-3.
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .aac), source: source))
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mkv, video: .h264, audio: .aac), source: source))
+        let eac3 = MediaInfo(videoCodecName: "h264", audioCodecName: "aac", audioCodecs: ["aac", "eac3"])
+        XCTAssertNotNil(CodecCompatibility.sourceProblem(keepAll(.m4v, video: .h264, audio: .aac), source: eac3))
+    }
+
+    func testTheReEncodedFirstAudioTrackNeverBlocks() {
+        // TrueHD cannot go into MP4, but track 1 is turned into AAC; track 2 (AAC) is fine.
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "truehd", audioCodecs: ["truehd", "aac"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .aac), source: source))
+        // Copied instead, it is the problem, and turning Keep all off would not help: say so.
+        let copied = CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .copy), source: source)
+        XCTAssertTrue(copied?.contains("track 1") == true && copied?.contains("TrueHD") == true, copied ?? "nil")
+        XCTAssertFalse(copied?.contains("turn off") == true, copied ?? "nil")
+    }
+
+    func testNoAudioMeansNoAudioProblem() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "ac3", audioCodecs: ["ac3", "ac3"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.webm, video: .vp9, audio: .none), source: source))
+    }
+
+    func testAudioOnlyContainersWithOneTrackOnlyLookAtTheFirstTrack() {
+        // MP3, FLAC and WAV hold one audio stream: the builder maps `0:a:0`, so a second track is never copied.
+        let source = MediaInfo(audioCodecName: "mp3", audioCodecs: ["mp3", "ac3"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp3, video: .none, audio: .copy), source: source))
+        // M4A takes every track, and refuses E-AC-3.
+        let eac3 = MediaInfo(audioCodecName: "aac", audioCodecs: ["aac", "eac3"])
+        XCTAssertNotNil(CodecCompatibility.sourceProblem(keepAll(.m4a, video: .none, audio: .aac), source: eac3))
+    }
+
+    /// The copy table is a record of what ffmpeg does, so it is checked against ffmpeg: every
+    /// codec into every container, stream copy of a one-second sine. Any ffmpeg release that starts
+    /// to accept (or refuse) a pair fails here instead of in front of a user.
+    func testAudioCopyTableMatchesFfmpeg() throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let encoders: [(codec: String, args: [String])] = [
+            ("aac", ["-c:a", "aac"]), ("ac3", ["-c:a", "ac3"]), ("eac3", ["-c:a", "eac3"]),
+            ("alac", ["-c:a", "alac"]), ("flac", ["-c:a", "flac"]), ("mp3", ["-c:a", "libmp3lame"]),
+            ("opus", ["-c:a", "libopus"]), ("pcm_s16le", ["-c:a", "pcm_s16le"]), ("mp2", ["-c:a", "mp2"]),
+            ("dts", ["-c:a", "dca", "-strict", "-2"]), ("truehd", ["-c:a", "truehd", "-strict", "-2", "-ar", "48000"]),
+        ]
+        func ffmpeg(_ args: [String]) throws -> Bool {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+            p.arguments = ["-hide_banner", "-loglevel", "quiet", "-y"] + args
+            try p.run(); p.waitUntilExit()
+            return p.terminationStatus == 0
+        }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let token = UUID().uuidString
+        // One source per codec, then every (codec, container) copy attempt in parallel: each is a
+        // separate ffmpeg process and there are about a hundred of them.
+        var sources: [(codec: String, url: URL)] = []
+        defer { sources.forEach { try? FileManager.default.removeItem(at: $0.url) } }
+        for encoder in encoders {
+            let source = dir.appendingPathComponent("copy-\(token)-\(encoder.codec).mkv")
+            sources.append((encoder.codec, source))
+            // A codec this ffmpeg cannot encode produces no file and is skipped below.
+            _ = try ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"] + encoder.args + [source.path])
+        }
+        let jobs = sources.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            .flatMap { source in Container.allCases.filter { $0 != .gif }.map { (source, $0) } }
+        if jobs.isEmpty { throw XCTSkip("this ffmpeg builds none of the audio encoders") }
+        var accepted = [Bool](repeating: false, count: jobs.count)
+        accepted.withUnsafeMutableBufferPointer { results in
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { i in
+                let (source, container) = jobs[i]
+                let output = dir.appendingPathComponent("copy-\(token)-\(i).\(container.fileExtension)")
+                defer { try? FileManager.default.removeItem(at: output) }
+                results[i] = (try? ffmpeg(["-i", source.url.path, "-map", "0:a:0", "-c:a", "copy", output.path])) ?? false
+            }
+        }
+        for (i, (source, container)) in jobs.enumerated() {
+            XCTAssertEqual(CodecCompatibility.canCopyAudio(source.codec, into: container), accepted[i],
+                           "\(source.codec) into \(container): ffmpeg \(accepted[i] ? "accepts" : "refuses") it")
+        }
+    }
 }
