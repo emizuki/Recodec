@@ -226,11 +226,17 @@ struct SettingsPanel: View {
             if showMore {
                 if canToneMap {
                     Toggle("Tone map HDR to SDR", isOn: $viewModel.settings.toneMapHDR)
+                        .disabled(!viewModel.toneMapAvailable)
                         .help("Convert HDR (PQ/HLG, BT.2020) video to Rec.709 SDR using "
                               + "VideoToolbox, so it no longer looks washed out on SDR "
                               + "displays. Only HDR files are affected; SDR files in the batch "
                               + "convert as usual. Switched on automatically when the first HDR "
                               + "file is loaded.")
+                    if !viewModel.toneMapAvailable {
+                        note("This ffmpeg has no scale_vt filter, so HDR cannot be tone mapped. "
+                             + "The Homebrew build has it: brew install ffmpeg.")
+                            .font(.caption)
+                    }
                 }
                 Toggle("Keep all audio and subtitle tracks", isOn: $viewModel.settings.preserveAllStreams)
                     .help("Map every audio and subtitle stream from the source (and "

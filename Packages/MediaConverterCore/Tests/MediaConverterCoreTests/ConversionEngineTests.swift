@@ -117,8 +117,7 @@ final class ConversionEngineTests: XCTestCase {
 
     /// Skips unless the located ffmpeg ships the VideoToolbox filter the graph needs.
     private func requireToneMapSupport(_ tools: FFmpegTools) throws {
-        let filters = try run(tools.ffmpeg, ["-hide_banner", "-filters"])
-        if !filters.contains("scale_vt") { throw XCTSkip("ffmpeg has no scale_vt (VideoToolbox) filter") }
+        if !tools.hasFilter("scale_vt") { throw XCTSkip("ffmpeg has no scale_vt (VideoToolbox) filter") }
     }
 
     private func requireEncoder(_ tools: FFmpegTools, _ name: String) throws {

@@ -535,6 +535,20 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.hasHDRSource)
     }
 
+    /// Without `scale_vt` every tone-mapped run fails, so the toggle is not switched on for the user.
+    func testHDRSourceDoesNotEnableToneMapWhenFfmpegCannotDoIt() async {
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "hevc", audioCodecName: "aac",
+                                    colorTransfer: "smpte2084") },
+            toolsAvailable: true,
+            toneMapAvailable: false,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/hdr.mov")])
+        XCTAssertTrue(vm.hasHDRSource, "the file is still recognised as HDR")
+        XCTAssertFalse(vm.settings.toneMapHDR)
+    }
+
     func testLoadingSDRSourceLeavesToneMapAlone() async {
         let vm = ConversionViewModel(
             engine: FakeEngine(),

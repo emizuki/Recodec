@@ -29,6 +29,9 @@ public final class ConversionViewModel: ObservableObject {
     @Published public var settings: ConversionSettings = .iPhoneDefault
     @Published public var isConverting: Bool = false
     public let toolsAvailable: Bool
+    /// Whether the located ffmpeg has the `scale_vt` filter tone mapping needs. Without it the
+    /// toggle is never switched on automatically (every run would fail) and the UI disables it.
+    public let toneMapAvailable: Bool
 
     private let engine: ConversionEngineProtocol
     private let probe: (URL) async throws -> MediaInfo
@@ -38,10 +41,12 @@ public final class ConversionViewModel: ObservableObject {
     public init(engine: ConversionEngineProtocol,
                 probe: @escaping (URL) async throws -> MediaInfo,
                 toolsAvailable: Bool,
+                toneMapAvailable: Bool = true,
                 fileExists: @escaping (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) {
         self.engine = engine
         self.probe = probe
         self.toolsAvailable = toolsAvailable
+        self.toneMapAvailable = toneMapAvailable
         self.fileExists = fileExists
     }
 
@@ -75,7 +80,7 @@ public final class ConversionViewModel: ObservableObject {
                 // the list can change meanwhile (overlapping loads, Remove, Clear All), and
                 // a user who turned it off with an HDR file loaded must not see it flip
                 // back on. Never switched off automatically.
-                if info.isHDR && !hasHDRSource { settings.toneMapHDR = true }
+                if info.isHDR && !hasHDRSource && toneMapAvailable { settings.toneMapHDR = true }
                 items[index].info = info
                 items[index].status = .ready
             } catch {
