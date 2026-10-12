@@ -156,9 +156,16 @@ Notes:
   Screenshots app → Options → HDR, or iPhone Settings → Camera → Record Video →
   HDR Video.
 
+## Download
+
+Get `Recodec-X.Y.Z.zip` from [Releases](https://github.com/emizuki/Recodec/releases), unzip it and drag
+`Recodec.app` to Applications. Each release is signed with a Developer ID certificate and notarized by
+Apple; the `.sha256` file next to the zip checks the download (`shasum -a 256 -c Recodec-X.Y.Z.zip.sha256`).
+
 ## Requirements
 
 - macOS 13 (Ventura) or later
+- Apple silicon: the release builds are arm64 only. On an Intel Mac, build from source.
 - [`ffmpeg`](https://ffmpeg.org/) installed on your machine (see below)
 
 ## Install ffmpeg (required)
