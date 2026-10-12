@@ -56,14 +56,15 @@ Two things to know:
   the same goes for a copied first track. MP3, FLAC and WAV hold exactly
   one audio track, so they get the first; M4A keeps them all. GIF ignores the
   setting.
-- Text subtitles are converted to the format the container holds, so they never
-  stop a run: `mov_text` for MP4, MOV and M4V, WebVTT for WebM, SubRip for MKV
-  (which keeps SubRip, ASS and WebVTT as they are, so styled ASS stays styled).
+- SubRip, ASS, WebVTT and `mov_text` subtitles are converted to the format the container
+  holds, so they do not stop a run: `mov_text` for MP4, MOV and M4V, WebVTT for WebM, SubRip
+  for MKV (which keeps SubRip, ASS and WebVTT as they are, so styled ASS stays styled).
   Converting to `mov_text`, WebVTT or SubRip drops ASS styling. Bitmap subtitles
   cannot become text: PGS is kept by MKV only, and a file with a PGS track is
   refused for the other containers before ffmpeg starts, naming the track — use
-  MKV for disc remuxes. Other bitmap formats (VobSub, DVB) are copied as they
-  are, and ffmpeg decides whether the container takes them.
+  MKV for disc remuxes. Any other subtitle codec (VobSub, DVB, SAMI, …) is copied as it
+  is, and ffmpeg decides whether the container takes it; when it does not, the row shows
+  ffmpeg's own reason.
 - **Default subtitle** sets which subtitle track a player selects on its own. It
   needs *Keep all audio and subtitle tracks*, because without mapping there is at most one subtitle
   track to flag. Picking a language clears the *default* flag on every subtitle
