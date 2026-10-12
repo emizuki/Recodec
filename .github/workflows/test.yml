@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The engine tests run the real ffmpeg; the ones that need a filter or encoder it lacks skip.
+      - name: Install ffmpeg and XcodeGen
+        run: brew install ffmpeg xcodegen
+
+      - name: Package tests
+        working-directory: Packages/MediaConverterCore
+        run: swift test
+
+      # `swift test` does not compile the SwiftUI app, which is where the view code lives.
+      - name: Build the app
+        run: |
+          xcodegen generate
+          xcodebuild -project Recodec.xcodeproj -scheme Recodec -configuration Debug build CODE_SIGNING_ALLOWED=NO
