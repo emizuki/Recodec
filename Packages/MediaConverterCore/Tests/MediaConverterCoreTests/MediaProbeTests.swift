@@ -23,4 +23,27 @@ final class MediaProbeTests: XCTestCase {
         XCTAssertEqual(info.audioCodecName, "aac")
         XCTAssertEqual(try XCTUnwrap(info.durationSeconds), 1.0, accuracy: 0.3)
     }
+
+    /// x265 can write HLG as an alternative-transfer SEI only, leaving the stream tag at BT.2020-10.
+    func testProbeFlagsHLGThatOnlyTheBitstreamSignals() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("probe-hlg-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let gen = Process()
+        gen.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+        gen.arguments = ["-hide_banner", "-loglevel", "error",
+                         "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=15:duration=1",
+                         "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+                         "-x265-params", "colorprim=bt2020:transfer=bt2020-10:colormatrix=bt2020nc:atc-sei=18:log-level=error",
+                         "-y", tmp.path]
+        let err = Pipe()
+        gen.standardError = err
+        try gen.run(); gen.waitUntilExit()
+        guard gen.terminationStatus == 0 else { throw XCTSkip("ffmpeg has no libx265") }
+
+        let info = try await MediaProbe(ffprobe: tools.ffprobe).probe(tmp)
+        XCTAssertTrue(info.isHDR, "transfer read as \(info.colorTransfer ?? "nil")")
+    }
 }

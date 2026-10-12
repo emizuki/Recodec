@@ -5,6 +5,7 @@ public enum FFprobeParser {
         struct Tags: Decodable { let language: String? }
         struct Disposition: Decodable { let `default`: Int? }
         struct Stream: Decodable {
+            let index: Int?
             let codec_type: String?
             let codec_name: String?
             let color_transfer: String?
@@ -13,7 +14,13 @@ public enum FFprobeParser {
             let tags: Tags?
         }
         struct Format: Decodable { let duration: String? }
+        struct Frame: Decodable {
+            let stream_index: Int?
+            let media_type: String?
+            let color_transfer: String?
+        }
         let streams: [Stream]?
+        let frames: [Frame]?
         let format: Format?
     }
 
@@ -34,8 +41,18 @@ public enum FFprobeParser {
 
     public static func parse(_ data: Data) throws -> MediaInfo {
         let probe = try JSONDecoder().decode(Probe.self, from: data)
-        let videoStream = probe.streams?.first { $0.codec_type == "video" }
+        // The first video stream, and its position: `-show_frames` names the stream by index.
+        let firstVideo = probe.streams?.enumerated().first { $0.element.codec_type == "video" }
+        let videoStream = firstVideo?.element
         let video = videoStream?.codec_name
+        // The decoded frame's transfer function beats the stream's: HLG can be signalled only by an
+        // alternative-transfer SEI in the bitstream, which the stream entry never shows. No frame (an
+        // audio-only file, or one that could not be decoded) leaves the stream-level value.
+        let videoIndex = firstVideo.map { $0.element.index ?? $0.offset }
+        let frameTransfer = probe.frames?
+            .first { $0.media_type == "video" && $0.stream_index == videoIndex }?
+            .color_transfer
+        let colorTransfer = frameTransfer ?? videoStream?.color_transfer
         let audioStreams = probe.streams?.filter { $0.codec_type == "audio" } ?? []
         let audioStream = audioStreams.first
         let audio = audioStream?.codec_name
@@ -47,7 +64,7 @@ public enum FFprobeParser {
             .map { $0.tags?.language ?? "" } ?? []
         return MediaInfo(durationSeconds: duration, videoCodecName: video,
                          audioCodecName: audio, subtitleLanguages: subtitles,
-                         colorTransfer: videoStream?.color_transfer,
+                         colorTransfer: colorTransfer,
                          audioChannels: autoSelectedAudio(audioStreams)?.channels,
                          firstAudioChannels: audioStream?.channels)
     }

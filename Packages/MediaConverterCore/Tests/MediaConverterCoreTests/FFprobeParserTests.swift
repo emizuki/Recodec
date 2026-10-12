@@ -59,6 +59,32 @@ final class FFprobeParserTests: XCTestCase {
         XCTAssertFalse(info.isHDR)
     }
 
+    /// HLG can be signalled only by an alternative-transfer SEI inside the bitstream. ffprobe's
+    /// stream entry then still shows the container-level value (`bt2020-10`, `bt709`), and only the
+    /// decoded frames say `arib-std-b67`.
+    func testHDRSignalledOnlyInTheFramesIsDetected() throws {
+        func probe(streamTransfer: String, frames: String) throws -> MediaInfo {
+            try FFprobeParser.parse(Data("""
+            {"streams":[{"index":0,"codec_type":"audio","codec_name":"aac"},
+                        {"index":1,"codec_type":"video","codec_name":"hevc","color_transfer":"\(streamTransfer)"}],
+             "frames":[\(frames)]}
+            """.utf8))
+        }
+        let hlgFrame = #"{"stream_index":1,"media_type":"video","color_transfer":"arib-std-b67"}"#
+        for streamTransfer in ["bt2020-10", "bt709"] {
+            let info = try probe(streamTransfer: streamTransfer, frames: hlgFrame)
+            XCTAssertTrue(info.isHDR, "stream says \(streamTransfer), the frame says HLG")
+            XCTAssertEqual(info.colorTransfer, "arib-std-b67")
+        }
+        // A frame of another stream says nothing about the video.
+        let otherStream = #"{"stream_index":0,"media_type":"audio","color_transfer":"arib-std-b67"}"#
+        XCTAssertFalse(try probe(streamTransfer: "bt709", frames: otherStream).isHDR)
+        // No frame was decoded (or it carries no tag): the stream-level value stands.
+        XCTAssertEqual(try probe(streamTransfer: "smpte2084", frames: "").colorTransfer, "smpte2084")
+        XCTAssertTrue(try probe(streamTransfer: "smpte2084", frames: #"{"stream_index":1,"media_type":"video"}"#).isHDR)
+        XCTAssertFalse(try probe(streamTransfer: "bt709", frames: "").isHDR)
+    }
+
     func testChannelCountFollowsTheAudioStreamFfmpegSelects() throws {
         // Rule measured on ffmpeg 9.0.2 (`map_auto_audio`): a stream flagged default wins, then the
         // most channels, then the first of equals. `firstAudioChannels` is the first stream.
