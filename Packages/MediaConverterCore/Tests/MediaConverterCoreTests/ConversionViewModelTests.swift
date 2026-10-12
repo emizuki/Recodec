@@ -191,6 +191,52 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertTrue(msg.contains("supported"), "failure message should mention 'supported'; got: \(msg)")
     }
 
+    // MARK: - Failure message
+
+    final class FailingEngine: ConversionEngineProtocol {
+        let error: Error
+        init(_ error: Error) { self.error = error }
+        func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
+                     onProgress: @escaping (Double) -> Void) async throws { throw error }
+        func cancel() {}
+    }
+
+    private func failureMessage(stderr: String) async -> String? {
+        let vm = ConversionViewModel(
+            engine: FailingEngine(ConversionError.ffmpegFailed(code: 234, stderrTail: stderr)),
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mkv")])
+        await vm.convertAll()
+        guard case .failed(let message) = vm.items[0].status else { return nil }
+        return message
+    }
+
+    /// ffmpeg ends every failed run with "Conversion failed!" and the cause is logged first,
+    /// followed by its consequences. The badge showed that last line, which says nothing.
+    func testFailureShowsTheCauseNotFfmpegsClosingLine() async {
+        let stderr = """
+        [mp4 @ 0x13f00a280] Could not find tag for codec subrip in stream #2, codec not currently supported in container
+        [out#0/mp4 @ 0x13f00c300] Could not write header (incorrect codec parameters ?): Invalid argument
+        [out#0/mp4 @ 0x13f00c300] Nothing was written into output file, because at least one of its streams received no packets.
+        Conversion failed!
+
+        """
+        let message = await failureMessage(stderr: stderr)
+        XCTAssertEqual(message, "Could not find tag for codec subrip in stream #2, codec not currently supported in container")
+    }
+
+    func testFailureWithoutLoggerPrefixKeepsTheWholeLine() async {
+        let message = await failureMessage(stderr: "Error opening input file /a.mkv.\nError opening input files: No such file or directory\n")
+        XCTAssertEqual(message, "Error opening input file /a.mkv.")
+    }
+
+    func testFailureWithEmptyStderrStillSaysSomething() async {
+        let message = await failureMessage(stderr: "")
+        XCTAssertEqual(message, "ffmpeg failed")
+    }
+
     // MARK: - containerChanged / videoCodecChanged
 
     /// Switching to webm must reset h264→vp9 (first valid video), aac→opus (first valid audio),

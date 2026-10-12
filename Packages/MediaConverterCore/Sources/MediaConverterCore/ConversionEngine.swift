@@ -11,6 +11,24 @@ public enum ConversionError: Error {
     case cancelled
 }
 
+extension ConversionError: LocalizedError {
+    /// What the file row shows. For a failed run it is the first line ffmpeg logged at error level
+    /// (see `FFmpegConversionEngine.runProcess`), without the `[muxer @ 0x…]` logger tag.
+    public var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            return "Cancelled"
+        case .ffmpegFailed(_, let stderrTail):
+            let first = stderrTail
+                .split(whereSeparator: \.isNewline)
+                .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            guard let line = first else { return "ffmpeg failed" }
+            return String(line).replacingOccurrences(of: #"^\[[^\]]* @ 0x[0-9a-fA-F]+\] "#, with: "",
+                                                     options: .regularExpression)
+        }
+    }
+}
+
 // MARK: - Private helpers
 
 /// Owns the locked process/cancelled state so NSLock never lives inside an async function.
@@ -104,6 +122,9 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
     private let ffmpeg: String
     private let state = ConversionState()
 
+    /// Enough for the whole error cascade of a failed run (a few hundred bytes with `-loglevel error`).
+    private static let stderrTailBytes = 4096
+
     public init(ffmpeg: String) { self.ffmpeg = ffmpeg }
 
     public func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
@@ -136,7 +157,9 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
                             onProgress: @escaping (Double) -> Void) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffmpeg)
-        process.arguments = ["-progress", "pipe:1", "-nostats"] + args
+        // `-loglevel error`: stderr then holds only what went wrong. ffmpeg logs the cause first and
+        // its consequences after it, so the first line is the reason the run failed.
+        process.arguments = ["-loglevel", "error", "-progress", "pipe:1", "-nostats"] + args
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -184,7 +207,7 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
             throw ConversionError.cancelled
         }
         guard process.terminationStatus == 0 else {
-            let tail = String(decoding: stderrData.suffix(800), as: UTF8.self)
+            let tail = String(decoding: stderrData.suffix(Self.stderrTailBytes), as: UTF8.self)
             throw ConversionError.ffmpegFailed(code: process.terminationStatus, stderrTail: tail)
         }
     }

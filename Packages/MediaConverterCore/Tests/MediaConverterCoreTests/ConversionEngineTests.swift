@@ -616,6 +616,26 @@ final class ConversionEngineTests: XCTestCase {
         XCTAssertEqual(try videoStream(tools, output)["codec_tag_string"] as? String, "hvc1")
     }
 
+    /// A run ffmpeg really aborts: the second audio track (AC-3) cannot go into WebM. The error
+    /// that reaches the user must be the muxer's own sentence, not the closing "Conversion failed!".
+    func testFailedRunSurfacesTheMuxersReason() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .multiMKV)
+        defer { discard(input) }
+
+        do {
+            let output = try await keepAll(tools, input: input, to: .webm, video: .vp9, audio: .opus)
+            discard(output)
+            XCTFail("WebM cannot hold the AC-3 track, ffmpeg should have aborted")
+        } catch {
+            let message = error.localizedDescription
+            // "supported": the muxer's sentence. The banner line `Input #0, matroska,webm, ...` that
+            // leads the log without `-loglevel error` also says "webm", so that word alone proves nothing.
+            XCTAssertTrue(message.contains("supported") && message.contains("WebM"), "got: \(message)")
+            XCTAssertFalse(message.contains("0x"), "logger prefix not stripped: \(message)")
+        }
+    }
+
     // MARK: - Default subtitle, 2-pass with several videos, audio bitrates (real ffmpeg)
 
     /// Language and default/forced flags of every subtitle stream, in order.

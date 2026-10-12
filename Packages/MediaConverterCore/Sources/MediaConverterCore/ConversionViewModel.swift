@@ -125,7 +125,7 @@ public final class ConversionViewModel: ObservableObject {
             } catch ConversionError.cancelled {
                 items[index].status = .failed("Cancelled")
             } catch {
-                items[index].status = .failed(Self.message(for: error))
+                items[index].status = .failed(error.localizedDescription)
             }
         }
     }
@@ -211,12 +211,5 @@ public final class ConversionViewModel: ObservableObject {
     private func updateProgress(at index: Int, to fraction: Double) {
         guard items.indices.contains(index) else { return }
         items[index].progress = fraction
-    }
-
-    private static func message(for error: Error) -> String {
-        if case ConversionError.ffmpegFailed(_, let tail) = error {
-            return tail.split(separator: "\n").last.map(String.init) ?? "ffmpeg failed"
-        }
-        return error.localizedDescription
     }
 }
