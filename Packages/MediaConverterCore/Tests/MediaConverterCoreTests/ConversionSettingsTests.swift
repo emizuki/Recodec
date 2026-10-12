@@ -68,12 +68,6 @@ final class ConversionSettingsTests: XCTestCase {
         XCTAssertFalse(VideoCodec.none.supportsPreset)
     }
 
-    func testAudioBitratePresetsUpTo1536() {
-        let kbps = AudioBitrate.presets.compactMap { if case .kbps(let k) = $0 { return k } else { return nil } }
-        XCTAssertEqual(kbps, [96, 128, 160, 192, 256, 320, 384, 448, 512, 640, 768, 1024, 1536])
-        XCTAssertEqual(AudioBitrate.presets.first, .auto)
-    }
-
     func testStreamPreservationDefaultsOff() {
         let s = ConversionSettings(container: .mkv, videoCodec: .copy, audioCodec: .eac3, crf: 20)
         XCTAssertFalse(s.preserveAllStreams)

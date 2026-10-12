@@ -200,6 +200,38 @@ final class ArgumentBuilderTests: XCTestCase {
                        [["-disposition:s", "-default"]])
     }
 
+    /// ffmpeg applies an option to the output file that follows it, so a flag placed after the output
+    /// path is ignored (or read as another output). Subtitle flags, `-movflags` and the stream
+    /// options must all come before the path, which must be the last argument of every command that
+    /// writes a file; pass 1 of a 2-pass run ends in `/dev/null` instead.
+    func testOutputPathIsLastSoNoOptionLandsAfterIt() {
+        for container in [Container.mp4, .mkv] {
+            var s = ConversionSettings(container: container, videoCodec: .h264, audioCodec: .aac, crf: 23)
+            s.preserveAllStreams = true
+            s.subtitleDefault = .language("eng")
+            let source = MediaInfo(durationSeconds: 10, videoCodecName: "hevc", audioCodecName: "aac",
+                                   subtitleLanguages: ["ger", "eng"], subtitleCodecs: ["subrip", "subrip"])
+            let output = "/out.\(container.fileExtension)"
+            let single = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: output, source: source)
+            XCTAssertEqual(single.count, 1)
+            XCTAssertEqual(single[0].last, output, "\(container)")
+            XCTAssertTrue(single[0].contains("-disposition:s:1"), "\(container): the flags under test are present")
+
+            s.rateControl = .bitrate
+            let twoPass = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: output, source: source,
+                                                passLog: "/tmp/log")
+            XCTAssertEqual(twoPass.count, 2)
+            XCTAssertEqual(twoPass[0].last, "/dev/null", "\(container) pass 1")
+            XCTAssertEqual(twoPass[1].last, output, "\(container) pass 2")
+            XCTAssertTrue(twoPass[1].contains("-disposition:s:1"), "\(container): pass 2 carries the flags")
+        }
+        // `-movflags +faststart` is an MP4-family output option like the rest.
+        var mp4 = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        mp4.preserveAllStreams = true
+        let args = ArgumentBuilder.build(settings: mp4, input: "/in.mkv", output: "/out.mp4", source: multiTrack)[0]
+        XCTAssertEqual(Array(args.suffix(3)), ["-movflags", "+faststart", "/out.mp4"])
+    }
+
     func testSubtitleDefaultMatchesBibliographicAndTerminologyCodes() {
         // ISO 639-2 gives German two codes (ger/deu) and French two (fre/fra); MP4 and many
         // encoders write the terminology form while the picker offers the bibliographic one.
