@@ -139,7 +139,7 @@ struct VerdictLabel: View {
     var font: Font = .caption
 
     var body: some View {
-        Label(text, systemImage: isReady ? "checkmark.seal.fill" : "iphone.slash")
+        Label(text, systemImage: isReady ? "iphone.badge.checkmark" : "iphone.slash")
             .font(font)
             .foregroundStyle(isReady ? Color.green : Color.secondary)
             .lineLimit(2)
