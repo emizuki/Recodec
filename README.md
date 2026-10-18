@@ -30,46 +30,6 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
 - **Reasons, not "Conversion failed!":** when ffmpeg cannot convert a file, its row shows the first error ffmpeg logged (the muxer's own sentence), or, for a track the container cannot hold, which track and what to do.
 
-## HDR sources
-
-iPhones record Dolby Vision / HLG by default, and the macOS Screenshots app
-records the screen in HDR (PQ, BT.2020, 10-bit) on an HDR-capable display.
-Both play back fine on the device that made them, but the moment such a clip
-is re-encoded without care — or just viewed on an SDR screen — the BT.2020
-pixels get interpreted as Rec.709 and the picture goes flat and grey.
-
-Recodec reads the video's transfer function when a file is loaded, from the stream
-and from the first decoded frame (HLG can be signalled only inside the bitstream, where
-the stream entry never shows it). If it
-is PQ or HLG the **Tone map HDR to SDR** toggle (under **More options**) switches itself on, and the
-conversion runs Apple's own tone mapper (`scale_vt`, the one QuickTime uses)
-on VideoToolbox before encoding: H.264 and HEVC are decoded in hardware, other
-codecs by ffmpeg, and the frames are then uploaded to the GPU for the mapping
-step. The output is tagged Rec.709
-throughout and the HDR mastering / content light level metadata is stripped,
-so players do not re-flag it as HDR. The *ambient viewing environment* side data some
-iPhone clips carry is not an HDR flag and is left as it is.
-
-Notes:
-
-- Tone mapping needs the video re-encoded; with video **Copy** the Video column says
-  so and the toggle is not shown.
-- The toggle switches itself *on* when the list goes from having no HDR file to
-  having one, and is never switched off automatically, so a manual choice
-  survives adding more files to the batch.
-- Only HDR files are tone mapped. SDR files in the same batch are converted
-  exactly as they would be with the toggle off.
-- The mapping runs in 10-bit 4:2:0: a 4:2:2 or 4:4:4 HDR source (ProRes) is chroma
-  subsampled on the way through, even when the output codec is 4:2:2 again, and
-  an alpha channel is dropped.
-- It needs an ffmpeg that includes the `scale_vt` filter (the Homebrew build
-  does; check with `ffmpeg -filters | grep scale_vt`). Recodec asks ffmpeg for its
-  filters at launch; without `scale_vt` the toggle stays off and is disabled with a
-  note, and HDR files are converted without tone mapping.
-- If you mostly record for sharing, turn HDR off at the source instead:
-  Screenshots app → Options → HDR, or iPhone Settings → Camera → Record Video →
-  HDR Video.
-
 ## Download
 
 Get `Recodec-X.Y.Z.zip` from [Releases](https://github.com/emizuki/Recodec/releases), unzip it and drag
