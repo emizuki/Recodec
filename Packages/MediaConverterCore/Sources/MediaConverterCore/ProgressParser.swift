@@ -18,7 +18,10 @@ public struct ProgressParser {
             switch key {
             case "out_time_us":
                 if let us = Double(value), let dur = durationSeconds, dur > 0 {
-                    fraction = min(1.0, (us / 1_000_000.0) / dur)
+                    // ffmpeg's out_time_us is not monotonic: once a stream-copied audio track ends it
+                    // reports the audio's end while a slow video encoder is still behind, then falls
+                    // back to the video. The bar only moves forward.
+                    fraction = max(fraction, min(1.0, (us / 1_000_000.0) / dur))
                 }
             case "progress":
                 if value == "end" { isFinished = true; fraction = 1.0 }
