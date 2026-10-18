@@ -72,6 +72,7 @@ struct FileListView: View {
             }
         }
         .frame(height: visibleRows * Self.rowHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
         .overlay(RoundedRectangle(cornerRadius: 8)
             .strokeBorder(isDropTargeted ? Color.accentColor : Color.primary.opacity(0.10),
@@ -142,6 +143,7 @@ private struct FileRow: View {
                 .accessibilityHidden(!canRemove)
         }
         .padding(.horizontal, 10)
+        .frame(maxHeight: .infinity)
         .background(alignment: .leading) {
             if case .converting = item.status {
                 GeometryReader { geo in
