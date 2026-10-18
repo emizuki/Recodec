@@ -10,7 +10,7 @@ import MediaConverterCore
 /// opening "More options" does not resize the window.
 struct SettingsPanel: View {
     @ObservedObject var viewModel: ConversionViewModel
-    @State private var showMore = false
+    @State private var showMore = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let rowHeight: CGFloat = 24
