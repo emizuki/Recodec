@@ -352,6 +352,26 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.settings.subtitleDefault, .language("ger"), "a language works in every container")
     }
 
+    /// The picker lists the languages of every loaded file (a batch is the union), and a pick whose
+    /// file was removed stays listed instead of leaving the picker with no selection.
+    func testSubtitleDefaultChoicesFollowTheLoadedFiles() async {
+        let langs: [String: [String]] = ["a.mkv": ["vie", "eng"], "b.mkv": ["jpn", "eng"]]
+        let vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { MediaInfo(subtitleLanguages: langs[$0.lastPathComponent] ?? []) },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        vm.settings.container = .mkv
+        XCTAssertEqual(vm.subtitleDefaultChoices, [.unchanged, .none])
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mkv"), URL(fileURLWithPath: "/b.mkv")])
+        XCTAssertEqual(vm.subtitleDefaultChoices,
+                       [.unchanged, .none, .language("vie"), .language("eng"), .language("jpn")])
+        vm.settings.subtitleDefault = .language("jpn")
+        vm.removeItem(id: vm.items[1].id)
+        XCTAssertEqual(vm.subtitleDefaultChoices.last, .language("jpn"))
+        XCTAssertEqual(vm.settings.subtitleDefault, .language("jpn"))
+    }
+
     func testVideoCodecChangeClearsHardwareWhenUnsupported() {
         let vm = ConversionViewModel(
             engine: FakeEngine(),

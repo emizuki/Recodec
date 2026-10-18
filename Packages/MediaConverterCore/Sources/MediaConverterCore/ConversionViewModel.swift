@@ -73,6 +73,16 @@ public final class ConversionViewModel: ObservableObject {
         return verdict.isCompatible && copiesSomething ? nil : verdict
     }
 
+    /// What "Default subtitle" offers: the languages of the loaded files for the current container.
+    /// The current pick stays listed when no loaded file has that language any more (the file was
+    /// removed, say), so the setting is never changed or shown as an empty selection behind the user's back.
+    public var subtitleDefaultChoices: [SubtitleDefault] {
+        var choices = SubtitleDefault.presets(for: settings.container,
+                                              languages: items.flatMap { $0.info?.subtitleLanguages ?? [] })
+        if !choices.contains(settings.subtitleDefault) { choices.append(settings.subtitleDefault) }
+        return choices
+    }
+
     public func loadFiles(_ urls: [URL]) async {
         let wasEmpty = items.isEmpty
         for url in urls where !items.contains(where: { $0.url == url }) {

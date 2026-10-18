@@ -244,7 +244,7 @@ struct SettingsPanel: View {
                           + "The target container must be able to hold them.")
                 controlRow("Default subtitle") {
                     Picker("Default subtitle", selection: $viewModel.settings.subtitleDefault) {
-                        ForEach(SubtitleDefault.presets(for: settings.container), id: \.self) { Text(label($0)).tag($0) }
+                        ForEach(viewModel.subtitleDefaultChoices, id: \.self) { Text(label($0)).tag($0) }
                     }
                     .disabled(!settings.preserveAllStreams || !settings.container.supportsSubtitles)
                 }
@@ -351,13 +351,9 @@ struct SettingsPanel: View {
         switch s {
         case .unchanged:        return "Unchanged"
         case .none:             return "None"
-        case .language(let c):  return Self.languageNames[c] ?? c.uppercased()
+        case .language(let c):  return Locale(identifier: "en").localizedString(forLanguageCode: c) ?? c.uppercased()
         }
     }
-    private static let languageNames: [String: String] = [
-        "eng": "English", "ger": "German", "fre": "French",
-        "spa": "Spanish", "ita": "Italian",
-    ]
     private func label(_ b: AudioBitrate) -> String {
         switch b {
         case .auto:         return "Auto (encoder default)"

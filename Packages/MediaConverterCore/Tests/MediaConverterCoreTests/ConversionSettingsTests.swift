@@ -94,11 +94,17 @@ final class ConversionSettingsTests: XCTestCase {
         for container in [Container.mkv, .webm] {
             XCTAssertTrue(SubtitleDefault.presets(for: container).contains(.none), "\(container)")
         }
-        // Everything else stays: leaving the source alone and picking a language work everywhere.
         for container in [Container.mp4, .mov, .m4v, .mkv, .webm] {
-            let presets = SubtitleDefault.presets(for: container)
-            XCTAssertTrue(presets.contains(.unchanged) && presets.contains(.language("eng")), "\(container)")
+            XCTAssertEqual(SubtitleDefault.presets(for: container).first, .unchanged, "\(container)")
         }
+    }
+
+    /// Only languages a source has are offered; the two ISO 639-2 forms of one language are one choice;
+    /// untagged tracks have nothing to pick.
+    func testSubtitleDefaultOffersTheSourceLanguagesOnce() {
+        let presets = SubtitleDefault.presets(for: .mkv, languages: ["vie", "eng", "", "deu", "ger", "und", "vie"])
+        XCTAssertEqual(presets, [.unchanged, .none, .language("vie"), .language("eng"), .language("ger")])
+        XCTAssertEqual(SubtitleDefault.presets(for: .mp4), [.unchanged])
     }
 
     func testDefaultRateControlIsQuality() {

@@ -203,19 +203,25 @@ public enum SubtitleDefault: Sendable, Equatable, Hashable {
     /// Clear `default` on every subtitle track.
     case none
 
-    private static let allPresets: [SubtitleDefault] = [
-        .unchanged, .none, .language("eng"), .language("ger"),
-        .language("fre"), .language("spa"), .language("ita"),
-    ]
-
-    /// The choices worth offering for `container`. The MP4-family muxers re-enable the first subtitle
-    /// track when none is flagged (measured on ffmpeg 9.0.2), so there "None" does not clear the
-    /// default: it moves it to the first track. Matroska and WebM clear it for real.
-    public static func presets(for container: Container) -> [SubtitleDefault] {
+    /// The choices worth offering for `container` and the subtitle languages of the loaded sources
+    /// (`MediaInfo.subtitleLanguages`). Only languages that exist in a source are offered, each once
+    /// (bibliographic and terminology codes of one language merge), in order of first appearance;
+    /// untagged and `und` tracks have no language to pick. The MP4-family muxers re-enable the first
+    /// subtitle track when none is flagged (measured on ffmpeg 9.0.2), so there "None" does not clear
+    /// the default: it moves it to the first track. Matroska and WebM clear it for real.
+    public static func presets(for container: Container, languages: [String] = []) -> [SubtitleDefault] {
+        var presets: [SubtitleDefault] = [.unchanged]
         switch container {
-        case .mp4, .mov, .m4v: return allPresets.filter { $0 != .none }
-        default:               return allPresets
+        case .mp4, .mov, .m4v: break
+        default:               presets.append(.none)
         }
+        var seen = Set<String>()
+        for code in languages {
+            let canonical = canonicalLanguage(code)
+            guard !canonical.isEmpty, canonical != "und", seen.insert(canonical).inserted else { continue }
+            presets.append(.language(canonical))
+        }
+        return presets
     }
 
     /// ISO 639-2 gives 20 languages two codes: a bibliographic (B) one and a terminology (T)
