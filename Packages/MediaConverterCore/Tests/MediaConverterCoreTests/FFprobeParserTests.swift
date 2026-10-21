@@ -99,6 +99,19 @@ final class FFprobeParserTests: XCTestCase {
         XCTAssertEqual(info.subtitleCodecs, ["subrip", "ass", "", "hdmv_pgs_subtitle"])
     }
 
+    func testSelectedAudioCodecIsTheStreamFfmpegWouldPick() throws {
+        // The default-flagged track is not the first one: ffmpeg copies the default.
+        let json = """
+        {"streams":[{"codec_type":"video","codec_name":"h264"},
+                    {"codec_type":"audio","codec_name":"opus","channels":2,"disposition":{"default":0}},
+                    {"codec_type":"audio","codec_name":"aac","channels":2,"disposition":{"default":1}}]}
+        """.data(using: .utf8)!
+        let info = try FFprobeParser.parse(json)
+        XCTAssertEqual(info.audioCodecName, "opus", "the first stream is still the one the UI names")
+        XCTAssertEqual(info.audioCodecs, ["opus", "aac"])
+        XCTAssertEqual(info.selectedAudioCodec, "aac")
+    }
+
     func testChannelCountFollowsTheAudioStreamFfmpegSelects() throws {
         // Rule measured on ffmpeg 9.0.2 (`map_auto_audio`): a stream flagged default wins, then the
         // most channels, then the first of equals. `firstAudioChannels` is the first stream.

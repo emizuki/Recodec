@@ -35,6 +35,17 @@ final class IPhoneCompatibilityTests: XCTestCase {
         XCTAssertEqual(r.reason, "The source video (vp9) isn't H.264 or HEVC")
     }
 
+    /// Copying keeps the codec, so a codec the container refuses is not iPhone-ready even if
+    /// the codec itself plays: HEVC cannot go into the `ipod` muxer behind M4V.
+    func testCopyOfHEVCIntoM4VIsNotIPhoneReady() {
+        let hevcSource = MediaInfo(videoCodecName: "hevc", audioCodecName: "aac")
+        let r = IPhoneCompatibilityChecker.evaluate(make(.m4v, .copy, .aac), source: hevcSource)
+        XCTAssertFalse(r.isCompatible)
+        XCTAssertEqual(r.reason, "HEVC video can't be copied into M4V")
+        // H.264 copies into M4V and stays iPhone-ready.
+        XCTAssertTrue(IPhoneCompatibilityChecker.evaluate(make(.m4v, .copy, .aac), source: anySource).isCompatible)
+    }
+
     /// Copy of a stream the source doesn't have copies nothing, so a silent screen recording
     /// or an audio-only file is not "not iPhone-ready" for lacking something to copy.
     func testCopyOfAMissingStreamIsNotAProblem() {

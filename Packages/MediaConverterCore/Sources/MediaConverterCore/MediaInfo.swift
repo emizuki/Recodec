@@ -25,12 +25,15 @@ public struct MediaInfo: Sendable, Equatable {
     /// Channel count of the first audio stream: with every stream kept, the first one is the one
     /// `-c:a:0` re-encodes. nil when unknown.
     public var firstAudioChannels: Int?
+    /// ffprobe `codec_name` of the audio stream ffmpeg copies when nothing is mapped explicitly
+    /// (`FFprobeParser.autoSelectedAudio`). nil when the source has no audio stream.
+    public var selectedAudioCodec: String?
 
     public init(durationSeconds: Double? = nil, videoCodecName: String? = nil,
                 audioCodecName: String? = nil, audioCodecs: [String] = [],
                 subtitleLanguages: [String] = [], subtitleCodecs: [String] = [],
                 colorTransfer: String? = nil, audioChannels: Int? = nil,
-                firstAudioChannels: Int? = nil) {
+                firstAudioChannels: Int? = nil, selectedAudioCodec: String? = nil) {
         self.durationSeconds = durationSeconds
         self.videoCodecName = videoCodecName
         self.audioCodecName = audioCodecName
@@ -40,6 +43,7 @@ public struct MediaInfo: Sendable, Equatable {
         self.colorTransfer = colorTransfer
         self.audioChannels = audioChannels
         self.firstAudioChannels = firstAudioChannels ?? audioChannels
+        self.selectedAudioCodec = selectedAudioCodec
     }
 
     /// True when the video stream carries an HDR transfer function (PQ or HLG).

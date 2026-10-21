@@ -38,6 +38,13 @@ public enum IPhoneCompatibilityChecker {
             if !(name.map(videoCodecs.contains) ?? false) {
                 return .init(isCompatible: false, reason: videoReason(s.videoCodec, source: source))
             }
+            // Copy keeps the codec, so it must also fit this container: HEVC copies into MP4 but
+            // the `ipod` muxer behind M4V refuses it.
+            if s.videoCodec == .copy, let name, !CodecCompatibility.canCopyVideo(name, into: s.container) {
+                return .init(isCompatible: false,
+                             reason: "\(name.uppercased()) video can't be copied into "
+                                + s.container.fileExtension.uppercased())
+            }
         }
         if s.audioCodec != .none && !(s.audioCodec == .copy && source.audioCodecName == nil) {
             let name = (s.audioCodec == .copy) ? source.audioCodecName : s.audioCodec.canonicalName
