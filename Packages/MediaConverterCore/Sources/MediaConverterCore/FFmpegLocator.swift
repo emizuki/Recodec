@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 public struct FFmpegTools: Sendable, Equatable {
     public let ffmpeg: String
@@ -51,13 +52,43 @@ public enum FFmpegLocator {
         return nil
     }
 
+    private static let logger = Logger(subsystem: "com.recodec.MediaConverterCore", category: "FFmpegLocator")
+
+    /// Why a user-set directory override cannot be used, or nil when it is usable. Pure so the
+    /// reasons can be tested without touching the filesystem.
+    static func overrideProblem(
+        directory: String,
+        fileExists: (String) -> Bool,
+        isExecutable: (String) -> Bool
+    ) -> String? {
+        guard fileExists(directory) else { return "ffmpeg directory override does not exist" }
+        let ffmpeg = directory + "/ffmpeg"
+        let ffprobe = directory + "/ffprobe"
+        guard fileExists(ffmpeg) else { return "ffmpeg directory override has no ffmpeg" }
+        guard fileExists(ffprobe) else { return "ffmpeg directory override has no ffprobe" }
+        guard isExecutable(ffmpeg), isExecutable(ffprobe) else {
+            return "ffmpeg directory override is not executable"
+        }
+        return nil
+    }
+
     /// Real lookup: honours a user-set directory override, then the default search paths.
     public static func locate() -> FFmpegTools? {
         let fm = FileManager.default
+        let existsFile: (String) -> Bool = { fm.fileExists(atPath: $0) }
         let exists: (String) -> Bool = { fm.isExecutableFile(atPath: $0) }
-        if let override = UserDefaults.standard.string(forKey: overrideDefaultsKey), !override.isEmpty,
-           let tools = locate(searchPaths: [override], fileExists: exists) {
-            return tools
+        if let override = UserDefaults.standard.string(forKey: overrideDefaultsKey), !override.isEmpty {
+            if let problem = overrideProblem(
+                directory: override,
+                fileExists: existsFile,
+                isExecutable: exists
+            ) {
+                logger.notice(
+                    "Ignoring \(override, privacy: .public): \(problem, privacy: .public)"
+                )
+            } else if let tools = locate(searchPaths: [override], fileExists: exists) {
+                return tools
+            }
         }
         return locate(searchPaths: defaultSearchPaths, fileExists: exists)
     }

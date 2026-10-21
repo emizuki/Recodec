@@ -15,6 +15,78 @@ final class FFmpegLocatorTests: XCTestCase {
         XCTAssertNil(FFmpegLocator.locate(searchPaths: ["/a"], fileExists: { $0 == "/a/ffmpeg" }))
     }
 
+    // MARK: - Override diagnostics
+
+    func testOverrideProblemIsNilForUsableDirectory() {
+        let present: Set<String> = ["/opt/ff", "/opt/ff/ffmpeg", "/opt/ff/ffprobe"]
+        XCTAssertNil(FFmpegLocator.overrideProblem(
+            directory: "/opt/ff",
+            fileExists: { present.contains($0) },
+            isExecutable: { present.contains($0) }
+        ))
+    }
+
+    func testOverrideProblemReportsMissingDirectory() {
+        let reason = FFmpegLocator.overrideProblem(
+            directory: "/opt/ff",
+            fileExists: { _ in false },
+            isExecutable: { _ in false }
+        )
+        XCTAssertEqual(reason, "ffmpeg directory override does not exist")
+    }
+
+    func testOverrideProblemReportsMissingFfmpeg() {
+        let present: Set<String> = ["/opt/ff", "/opt/ff/ffprobe"]
+        let reason = FFmpegLocator.overrideProblem(
+            directory: "/opt/ff",
+            fileExists: { present.contains($0) },
+            isExecutable: { present.contains($0) }
+        )
+        XCTAssertEqual(reason, "ffmpeg directory override has no ffmpeg")
+    }
+
+    func testOverrideProblemReportsMissingFfprobe() {
+        let present: Set<String> = ["/opt/ff", "/opt/ff/ffmpeg"]
+        let reason = FFmpegLocator.overrideProblem(
+            directory: "/opt/ff",
+            fileExists: { present.contains($0) },
+            isExecutable: { present.contains($0) }
+        )
+        XCTAssertEqual(reason, "ffmpeg directory override has no ffprobe")
+    }
+
+    func testOverrideProblemReportsNonExecutableBinaries() {
+        let present: Set<String> = ["/opt/ff", "/opt/ff/ffmpeg", "/opt/ff/ffprobe"]
+        let reason = FFmpegLocator.overrideProblem(
+            directory: "/opt/ff",
+            fileExists: { present.contains($0) },
+            isExecutable: { _ in false }
+        )
+        XCTAssertEqual(reason, "ffmpeg directory override is not executable")
+    }
+
+    func testLocateFallsBackToDefaultPathsWhenOverrideIsRejected() throws {
+        let fm = FileManager.default
+        let key = FFmpegLocator.overrideDefaultsKey
+        let saved = UserDefaults.standard.string(forKey: key)
+        defer {
+            if let saved {
+                UserDefaults.standard.set(saved, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        let directory = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: directory) }
+        UserDefaults.standard.set(directory.path, forKey: key)
+
+        let expected = FFmpegLocator.locate(searchPaths: FFmpegLocator.defaultSearchPaths) {
+            fm.isExecutableFile(atPath: $0)
+        }
+        XCTAssertEqual(FFmpegLocator.locate(), expected)
+    }
+
     // MARK: - Filter detection
 
     func testFilterListingMatchesWholeFilterNames() {
