@@ -101,7 +101,12 @@ public enum ArgumentBuilder {
                         if s.videoCodec == .vp9 { videoEncode += ["-b:v", "0"] }
                     }
                 }
-                if s.videoCodec == .h264 || s.videoCodec == .hevc {
+                // h264/hevc always encode 8-bit. VP9 and AV1 keep the source format for
+                // SDR (a 10-bit SDR source stays 10-bit), but the tone-map graph hands
+                // them p010le and would otherwise produce 10-bit output (VP9 Profile 2),
+                // unlike every other container, so narrow those only when tone mapping.
+                if s.videoCodec == .h264 || s.videoCodec == .hevc
+                    || (toneMap && (s.videoCodec == .vp9 || s.videoCodec == .av1)) {
                     videoEncode += ["-pix_fmt", "yuv420p"]
                 }
                 if s.videoCodec == .h264 {
