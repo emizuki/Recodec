@@ -259,7 +259,8 @@ final class CodecCompatibilityTests: XCTestCase {
         let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
                                subtitleLanguages: ["eng", "ger"], subtitleCodecs: ["subrip", "hdmv_pgs_subtitle"])
         for container in [Container.mp4, .mov, .m4v, .webm] {
-            let problem = CodecCompatibility.sourceProblem(keepAll(container), source: source)
+            let problem = CodecCompatibility.sourceProblem(
+                keepAll(container, video: container == .webm ? .vp9 : .copy), source: source)
             XCTAssertNotNil(problem, "\(container)")
             XCTAssertTrue(problem?.contains("track 2") == true && problem?.contains("PGS") == true, "\(container): \(problem ?? "nil")")
         }
@@ -270,7 +271,8 @@ final class CodecCompatibilityTests: XCTestCase {
         let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
                                subtitleLanguages: ["eng", "ger", "fre"], subtitleCodecs: ["subrip", "ass", "mov_text"])
         for container in [Container.mp4, .mov, .m4v, .webm, .mkv] {
-            XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(container), source: source), "\(container)")
+            XCTAssertNil(CodecCompatibility.sourceProblem(
+                keepAll(container, video: container == .webm ? .vp9 : .copy), source: source), "\(container)")
         }
     }
 
@@ -387,6 +389,90 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertNotNil(CodecCompatibility.sourceProblem(keepAll(.m4a, video: .none, audio: .aac), source: eac3))
     }
 
+    // MARK: - Copied streams that the container cannot hold
+
+    func testVideoCopyTableFollowsTheMuxers() {
+        // Measured on ffmpeg 9.0.2 by remuxing each codec into each container.
+        XCTAssertTrue(CodecCompatibility.canCopyVideo("h264", into: .mp4))
+        XCTAssertTrue(CodecCompatibility.canCopyVideo("vp9", into: .mp4))
+        XCTAssertTrue(CodecCompatibility.canCopyVideo("av1", into: .mp4))
+        XCTAssertFalse(CodecCompatibility.canCopyVideo("prores", into: .mp4))
+        XCTAssertTrue(CodecCompatibility.canCopyVideo("prores", into: .mov))
+        XCTAssertFalse(CodecCompatibility.canCopyVideo("vp9", into: .mov))
+        XCTAssertFalse(CodecCompatibility.canCopyVideo("av1", into: .mov))
+        XCTAssertTrue(CodecCompatibility.canCopyVideo("h264", into: .m4v))
+        XCTAssertFalse(CodecCompatibility.canCopyVideo("hevc", into: .m4v))
+        for container in [Container.mkv] {
+            for codec in ["h264", "hevc", "av1", "vp8", "vp9", "prores"] {
+                XCTAssertTrue(CodecCompatibility.canCopyVideo(codec, into: container), "\(codec) into \(container)")
+            }
+        }
+        for codec in ["vp8", "vp9", "av1"] {
+            XCTAssertTrue(CodecCompatibility.canCopyVideo(codec, into: .webm), codec)
+        }
+        XCTAssertFalse(CodecCompatibility.canCopyVideo("h264", into: .webm))
+        // Audio-only targets and GIF carry no video whatever the source.
+        for container in [Container.m4a, .mp3, .flac, .wav, .gif] {
+            XCTAssertFalse(CodecCompatibility.canCopyVideo("h264", into: container), "\(container)")
+        }
+    }
+
+    func testACopiedVideoTheContainerCannotHoldBlocksTheFileEvenWithoutKeepAll() {
+        let source = MediaInfo(videoCodecName: "vp9", audioCodecName: "opus")
+        let keepAllMovement = CodecCompatibility.sourceProblem(keepAll(.mov, video: .copy, audio: .copy), source: source)
+        XCTAssertTrue(keepAllMovement?.contains("VP9") == true && keepAllMovement?.contains("MOV") == true,
+                      keepAllMovement ?? "nil")
+        // ffmpeg maps the source video by default too, so Keep all off does not help.
+        let defaultMapping = ConversionSettings(container: .mov, videoCodec: .copy, audioCodec: .none, crf: 20)
+        XCTAssertFalse(defaultMapping.preserveAllStreams)
+        XCTAssertEqual(CodecCompatibility.sourceProblem(defaultMapping, source: source), keepAllMovement)
+        // H.264 copies into MOV, and a source without video has nothing to copy. Keep an audio
+        // stream so the setting still produces output (both-off is L7's job).
+        XCTAssertNil(CodecCompatibility.sourceProblem(defaultMapping, source: MediaInfo(videoCodecName: "h264")))
+        let audioKept = ConversionSettings(container: .mov, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        XCTAssertNil(CodecCompatibility.sourceProblem(audioKept, source: MediaInfo(audioCodecName: "aac")))
+    }
+
+    func testACopiedAudioTrackTheContainerCannotHoldBlocksTheFileWithoutKeepAll() {
+        func problem(_ container: Container, _ codec: String) -> String? {
+            let source = MediaInfo(videoCodecName: "h264", audioCodecName: codec, audioCodecs: [codec],
+                                   selectedAudioCodec: codec)
+            return CodecCompatibility.sourceProblem(
+                ConversionSettings(container: container, videoCodec: .none, audioCodec: .copy, crf: 20),
+                source: source)
+        }
+        let webm = problem(.webm, "aac")
+        XCTAssertTrue(webm?.contains("AAC") == true && webm?.contains("WEBM") == true, webm ?? "nil")
+        let mp3 = problem(.mp3, "aac")
+        XCTAssertNotNil(mp3)
+        let mov = problem(.mov, "opus")
+        XCTAssertTrue(mov?.contains("Opus") == true && mov?.contains("MOV") == true, mov ?? "nil")
+        XCTAssertNil(problem(.webm, "opus"))
+        XCTAssertNil(problem(.mp4, "aac"))
+        for reason in [webm, mp3, mov].compactMap({ $0 }) {
+            XCTAssertLessThanOrEqual(reason.count, 85, reason)
+        }
+    }
+
+    func testTheSelectedAudioTrackIsTheOneCheckedWithoutKeepAll() {
+        // The default-flagged AAC is not the first track; ffmpeg copies the selected one.
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "opus",
+                               audioCodecs: ["opus", "aac"], selectedAudioCodec: "aac")
+        let webm = ConversionSettings(container: .webm, videoCodec: .vp9, audioCodec: .copy, crf: 20)
+        let picked = CodecCompatibility.sourceProblem(webm, source: source)
+        XCTAssertTrue(picked?.contains("AAC") == true, picked ?? "nil")
+        XCTAssertFalse(picked?.contains("Opus") == true, picked ?? "nil")
+        var opusSelected = source
+        opusSelected.selectedAudioCodec = "opus"
+        XCTAssertNil(CodecCompatibility.sourceProblem(webm, source: opusSelected), "Opus is what WebM wants")
+        // Without a parsed selection the first track is the fallback (and is wrong for MOV).
+        let mov = ConversionSettings(container: .mov, videoCodec: .h264, audioCodec: .copy, crf: 20)
+        var noSelection = source
+        noSelection.selectedAudioCodec = nil
+        XCTAssertNotNil(CodecCompatibility.sourceProblem(mov, source: noSelection))
+        XCTAssertNil(CodecCompatibility.sourceProblem(mov, source: source), "the selected AAC fits MOV")
+    }
+
     /// The copy table is a record of what ffmpeg does, so it is checked against ffmpeg: every
     /// codec into every container, stream copy of a one-second sine. Any ffmpeg release that starts
     /// to accept (or refuse) a pair fails here instead of in front of a user.
@@ -433,6 +519,55 @@ final class CodecCompatibilityTests: XCTestCase {
         }
         for (i, (source, container)) in jobs.enumerated() {
             XCTAssertEqual(CodecCompatibility.canCopyAudio(source.codec, into: container), accepted[i],
+                           "\(source.codec) into \(container): ffmpeg \(accepted[i] ? "accepts" : "refuses") it")
+        }
+    }
+
+    /// The same record for video: every codec the app can copy into every container that takes
+    /// video, remuxed from a one-second test pattern.
+    func testVideoCopyTableMatchesFfmpeg() throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let encoders: [(codec: String, args: [String])] = [
+            ("h264", ["-c:v", "libx264", "-pix_fmt", "yuv420p"]),
+            ("hevc", ["-c:v", "libx265", "-pix_fmt", "yuv420p", "-x265-params", "log-level=none"]),
+            ("av1", ["-c:v", "libsvtav1", "-pix_fmt", "yuv420p"]),
+            ("vp8", ["-c:v", "libvpx", "-pix_fmt", "yuv420p"]),
+            ("vp9", ["-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p"]),
+            ("prores", ["-c:v", "prores_ks", "-pix_fmt", "yuv422p10le"]),
+        ]
+        func ffmpeg(_ args: [String]) throws -> Bool {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: tools.ffmpeg)
+            p.arguments = ["-hide_banner", "-loglevel", "quiet", "-y"] + args
+            try p.run(); p.waitUntilExit()
+            return p.terminationStatus == 0
+        }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let token = UUID().uuidString
+        var sources: [(codec: String, url: URL)] = []
+        defer { sources.forEach { try? FileManager.default.removeItem(at: $0.url) } }
+        for encoder in encoders {
+            let source = dir.appendingPathComponent("vcopy-\(token)-\(encoder.codec).mkv")
+            sources.append((encoder.codec, source))
+            _ = try ffmpeg(["-f", "lavfi", "-i", "testsrc=size=128x128:rate=10:duration=1"]
+                           + encoder.args + ["-an", source.path])
+        }
+        // Audio-only targets and GIF deliberately take no video; only the video containers are measured.
+        let containers: [Container] = [.mp4, .mov, .m4v, .mkv, .webm]
+        let jobs = sources.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            .flatMap { source in containers.map { (source, $0) } }
+        if jobs.isEmpty { throw XCTSkip("this ffmpeg builds none of the video encoders") }
+        var accepted = [Bool](repeating: false, count: jobs.count)
+        accepted.withUnsafeMutableBufferPointer { results in
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { i in
+                let (source, container) = jobs[i]
+                let output = dir.appendingPathComponent("vcopy-\(token)-\(i).\(container.fileExtension)")
+                defer { try? FileManager.default.removeItem(at: output) }
+                results[i] = (try? ffmpeg(["-i", source.url.path, "-map", "0:v:0", "-c:v", "copy", output.path])) ?? false
+            }
+        }
+        for (i, (source, container)) in jobs.enumerated() {
+            XCTAssertEqual(CodecCompatibility.canCopyVideo(source.codec, into: container), accepted[i],
                            "\(source.codec) into \(container): ffmpeg \(accepted[i] ? "accepts" : "refuses") it")
         }
     }

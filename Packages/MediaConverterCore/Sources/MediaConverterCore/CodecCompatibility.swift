@@ -94,6 +94,24 @@ public enum CodecCompatibility {
         }
     }
 
+    /// Whether stream copy of a video track of `codec` (ffprobe's name) into `container` works.
+    /// Measured against ffmpeg 9.0.2, one codec at a time (`testVideoCopyTableMatchesFfmpeg`
+    /// repeats the measurement): MKV takes everything; MP4 takes H.264, HEVC, AV1 and VP9 but
+    /// neither ProRes (no mp4 tag) nor VP8; MOV additionally takes ProRes and refuses AV1, VP9 and
+    /// VP8 ("only supported in MP4"); M4V (the `ipod` muxer) refuses every codec the picker offers
+    /// besides H.264; WebM only VP8, VP9 and AV1. Audio-only containers and GIF carry no video.
+    /// Codecs outside the measured set are assumed to work, like `canCopyAudio`.
+    public static func canCopyVideo(_ codec: String, into container: Container) -> Bool {
+        switch container {
+        case .mkv:  return true
+        case .mp4:  return !["prores", "vp8"].contains(codec)
+        case .mov:  return !["av1", "vp8", "vp9"].contains(codec)
+        case .m4v:  return !["hevc", "av1", "vp8", "vp9", "prores"].contains(codec)
+        case .webm: return ["vp8", "vp9", "av1"].contains(codec)
+        case .m4a, .mp3, .gif, .flac, .wav: return false
+        }
+    }
+
     private static func displayName(ofCodec codec: String) -> String {
         let names = ["hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub", "ac3": "AC-3", "eac3": "E-AC-3",
                      "truehd": "TrueHD", "dts": "DTS", "alac": "ALAC", "opus": "Opus"]
@@ -124,11 +142,13 @@ public enum CodecCompatibility {
     }
 
     /// Why this file cannot be converted with these settings although the codec lists accept them:
-    /// a track of its own that the target container cannot hold. nil when nothing stands in the way.
-    /// Only checked with every stream kept; otherwise ffmpeg picks its own streams.
+    /// no output stream at all, or a track of its own that the target container cannot hold.
+    /// nil when nothing stands in the way. The first two checks run whether or not every stream
+    /// is kept; the per-track checks below only apply with Keep all on.
     public static func sourceProblem(_ settings: ConversionSettings, source: MediaInfo) -> String? {
         guard settings.container != .gif else { return nil }
         if let problem = missingRequestedStreamProblem(settings, source: source) { return problem }
+        if let problem = copiedStreamProblem(settings, source: source) { return problem }
         guard settings.preserveAllStreams else { return nil }
         let container = settings.container
         let target = container.fileExtension.uppercased()
@@ -161,6 +181,25 @@ public enum CodecCompatibility {
                 : "\(what) Use MKV, or turn off Keep all tracks."
         }
         return nil
+    }
+
+    /// Problems with the streams ffmpeg copies as they are, whether or not every stream is kept:
+    /// the source video is always mapped, and without Keep all ffmpeg also picks one audio track
+    /// (the `default`-flagged one, see `FFprobeParser.autoSelectedAudio`). With Keep all on, the
+    /// per-track loop in `sourceProblem` covers audio itself.
+    private static func copiedStreamProblem(_ settings: ConversionSettings, source: MediaInfo) -> String? {
+        let container = settings.container
+        let target = container.fileExtension.uppercased()
+        if settings.videoCodec == .copy, !container.isAudioOnly,
+           let codec = source.videoCodecName, !canCopyVideo(codec, into: container) {
+            return "The source video (\(displayName(ofCodec: codec))) can't go into \(target). "
+                + "Re-encode it, or use MKV."
+        }
+        guard !settings.preserveAllStreams, settings.audioCodec == .copy,
+              let codec = source.selectedAudioCodec ?? source.audioCodecName,
+              !canCopyAudio(codec, into: container) else { return nil }
+        return "The source audio (\(displayName(ofCodec: codec))) can't go into \(target). "
+            + "Pick another codec, or use MKV."
     }
 
     /// Channel layouts each audio encoder actually accepts. ffmpeg aborts the run

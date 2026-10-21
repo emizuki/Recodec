@@ -62,6 +62,7 @@ public enum FFprobeParser {
         let colorTransfer = frameTransfer ?? videoStream?.color_transfer
         let audioStreams = probe.streams?.filter { $0.codec_type == "audio" } ?? []
         let audioStream = audioStreams.first
+        let selectedAudio = autoSelectedAudio(audioStreams)
         let audio = audioStream?.codec_name
         let duration = probe.format?.duration.flatMap(Double.init)
         // Subtitle order here must match ffmpeg's own `-disposition:s:<n>` index,
@@ -74,7 +75,8 @@ public enum FFprobeParser {
                          subtitleLanguages: subtitles,
                          subtitleCodecs: subtitleCodecs,
                          colorTransfer: colorTransfer,
-                         audioChannels: autoSelectedAudio(audioStreams)?.channels,
-                         firstAudioChannels: audioStream?.channels)
+                         audioChannels: selectedAudio?.channels,
+                         firstAudioChannels: audioStream?.channels,
+                         selectedAudioCodec: selectedAudio?.codec_name)
     }
 }
