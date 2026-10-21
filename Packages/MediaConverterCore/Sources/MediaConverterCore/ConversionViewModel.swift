@@ -128,8 +128,19 @@ public final class ConversionViewModel: ObservableObject {
         cancelRequested = false
         isConverting = true
         defer { isConverting = false }
-        for index in items.indices {
+        // Work from a queue of ids, not a snapshot of `items.indices`: a file loaded (and
+        // probed) while the batch runs is appended to the list and must be converted in this
+        // same run. The list is only ever appended to while converting (Remove/Clear are
+        // no-ops), but resolving by id before touching `items` keeps that from mattering.
+        // Items still waiting for their probe have no `info`, so they stay for the next press.
+        var processed: Set<UUID> = []
+        while true {
             guard !cancelRequested else { break }
+            guard let index = items.firstIndex(where: { !processed.contains($0.id) && $0.info != nil }) else {
+                break
+            }
+            let id = items[index].id
+            processed.insert(id)
             // Convert any successfully-probed item, regardless of prior status: a .done or
             // .failed item must be re-convertible so pressing Convert again (e.g. after
             // changing the codec) re-runs it. Items that failed to probe have no info → skip.
@@ -146,18 +157,20 @@ public final class ConversionViewModel: ObservableObject {
             }
             let input = items[index].url
             let output = OutputNamer.outputURL(forInput: input, container: settings.container, fileExists: fileExists)
-            let id = items[index].id
             items[index].status = .converting
             items[index].progress = 0
             do {
                 try await engine.convert(input: input, output: output, settings: settings, source: info) { [weak self] fraction in
                     Task { @MainActor in self?.updateProgress(id: id, to: fraction) }
                 }
+                guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
                 items[index].status = .done(output)
                 items[index].progress = 1
             } catch ConversionError.cancelled {
+                guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
                 items[index].status = .failed("Cancelled")
             } catch {
+                guard let index = items.firstIndex(where: { $0.id == id }) else { continue }
                 items[index].status = .failed(error.localizedDescription)
             }
         }
@@ -233,8 +246,8 @@ public final class ConversionViewModel: ObservableObject {
         engine.cancel()
     }
 
-    /// Remove a single file from the list. No-op while converting (the convert loop is
-    /// index-based, so mutating the list mid-batch is unsafe).
+    /// Remove a single file from the list. No-op while converting: the batch is still running,
+    /// and keeping the list fixed avoids rows moving under the user (or the batch).
     public func removeItem(id: UUID) {
         guard !isConverting else { return }
         items.removeAll { $0.id == id }
