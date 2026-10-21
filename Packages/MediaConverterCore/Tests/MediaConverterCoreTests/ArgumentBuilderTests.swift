@@ -642,6 +642,51 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertTrue(args.contains("-color_trc"))
     }
 
+    func testToneMapNarrowsVP9AndAV1To8Bit() {
+        // `scale_vt` returns p010le, so without `-pix_fmt yuv420p` these encoders keep
+        // the 10-bit output the filter hands them (VP9 Profile 2), unlike every other
+        // container's encoder. Only tone-mapped runs narrow: a 10-bit SDR source must
+        // still pass its own format through.
+        let codecs: [(Container, VideoCodec, AudioCodec, String)] = [
+            (.webm, .vp9, .opus, "webm"),
+            (.mp4, .av1, .aac, "mp4"),
+        ]
+        for (container, codec, audio, name) in codecs {
+            var on = ConversionSettings(container: container, videoCodec: codec, audioCodec: audio, crf: 30)
+            on.toneMapHDR = true
+            let mapped = ArgumentBuilder.build(settings: on, input: "/in.mov",
+                                               output: "/out.\(container.fileExtension)",
+                                               source: hdrSrc)[0]
+            XCTAssertTrue(mapped.contains("-vf"), "\(name) gets the tone-map graph")
+            XCTAssertTrue(pairs(mapped).contains(["-pix_fmt", "yuv420p"]),
+                          "\(name) must narrow the tone-mapped 10-bit frames to 8-bit")
+
+            var off = on
+            off.toneMapHDR = false
+            let untouched = ArgumentBuilder.build(settings: off, input: "/in.mov",
+                                                 output: "/out.\(container.fileExtension)",
+                                                 source: hdrSrc)[0]
+            XCTAssertFalse(untouched.contains("-pix_fmt"),
+                           "\(name) without tone mapping keeps the source format")
+        }
+    }
+
+    func testToneMapNarrowsH264AndHEVCAsBefore() {
+        let codecs: [(Container, VideoCodec)] = [(.mp4, .h264), (.mp4, .hevc), (.mkv, .hevc)]
+        for (container, codec) in codecs {
+            for hardware in [false, true] {
+                var s = ConversionSettings(container: container, videoCodec: codec, audioCodec: .aac,
+                                           crf: 25, useHardware: hardware)
+                s.toneMapHDR = true
+                let args = ArgumentBuilder.build(settings: s, input: "/in.mov",
+                                                 output: "/out.\(container.fileExtension)",
+                                                 source: hdrSrc)[0]
+                XCTAssertTrue(pairs(args).contains(["-pix_fmt", "yuv420p"]),
+                              "\(codec) hardware=\(hardware) must stay 8-bit")
+            }
+        }
+    }
+
     func testToneMapTwoPassAppliesFilterToBothPasses() {
         var s = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 20)
         s.toneMapHDR = true
