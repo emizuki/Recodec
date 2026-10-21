@@ -47,9 +47,17 @@ public enum IPhoneCompatibilityChecker {
             }
         }
         if s.audioCodec != .none && !(s.audioCodec == .copy && source.audioCodecName == nil) {
-            let name = (s.audioCodec == .copy) ? source.audioCodecName : s.audioCodec.canonicalName
+            let copied = source.selectedAudioCodec ?? source.audioCodecName
+            let name = (s.audioCodec == .copy) ? copied : s.audioCodec.canonicalName
             if !(name.map(audioCodecs.contains) ?? false) {
                 return .init(isCompatible: false, reason: audioReason(s.audioCodec, source: source))
+            }
+            // Copy keeps the codec, so it must also fit this container: AAC copies into MP4
+            // but MP3 holds only MP3 audio.
+            if s.audioCodec == .copy, let name, !CodecCompatibility.canCopyAudio(name, into: s.container) {
+                return .init(isCompatible: false,
+                             reason: "\(name.uppercased()) audio can't be copied into "
+                                + s.container.fileExtension.uppercased())
             }
         }
         return .init(isCompatible: true, reason: nil)
@@ -66,7 +74,7 @@ public enum IPhoneCompatibilityChecker {
     private static func audioReason(_ c: AudioCodec, source: MediaInfo) -> String {
         switch c {
         case .opus: return "Opus audio doesn't play on iPhone"
-        case .copy: return "The source audio (\(source.audioCodecName ?? "none")) isn't AAC, MP3, or ALAC"
+        case .copy: return "The source audio (\(source.selectedAudioCodec ?? source.audioCodecName ?? "none")) isn't AAC, MP3, or ALAC"
         default:    return "This audio codec doesn't play on iPhone"
         }
     }

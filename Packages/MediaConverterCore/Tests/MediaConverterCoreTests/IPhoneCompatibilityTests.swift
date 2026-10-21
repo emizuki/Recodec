@@ -55,6 +55,20 @@ final class IPhoneCompatibilityTests: XCTestCase {
         XCTAssertTrue(IPhoneCompatibilityChecker.evaluate(make(.mp4, .copy, .copy), source: audioOnly).isCompatible)
     }
 
+    /// Copying keeps the audio codec, so a container that refuses it is not iPhone-ready even
+    /// when the codec itself plays: AAC cannot go into MP3.
+    func testCopyOfAudioTheContainerRefusesIsNotIPhoneReady() {
+        let aac = MediaInfo(videoCodecName: "h264", audioCodecName: "aac", audioCodecs: ["aac"],
+                            selectedAudioCodec: "aac")
+        let refused = IPhoneCompatibilityChecker.evaluate(make(.mp3, .none, .copy), source: aac)
+        XCTAssertFalse(refused.isCompatible)
+        XCTAssertEqual(refused.reason, "AAC audio can't be copied into MP3")
+
+        let mp3 = MediaInfo(videoCodecName: "h264", audioCodecName: "mp3", audioCodecs: ["mp3"],
+                            selectedAudioCodec: "mp3")
+        XCTAssertTrue(IPhoneCompatibilityChecker.evaluate(make(.mp3, .none, .copy), source: mp3).isCompatible)
+    }
+
     /// The flip side: a stream that is there and can't play still fails when copied.
     func testCopyOfAPresentIncompatibleAudioStreamStillFails() {
         let opusSource = MediaInfo(videoCodecName: "h264", audioCodecName: "opus")

@@ -8,6 +8,23 @@ final class ArgumentBuilderTests: XCTestCase {
                                audioCodecName: "truehd",
                                subtitleLanguages: ["ger", "eng", "fre"])
 
+    func testAudioOnlySourceDoesNotEncodeCoverArt() {
+        let source = MediaInfo(durationSeconds: 10, audioCodecName: "aac", audioCodecs: ["aac"])
+        let encoded = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .copy, crf: 25)
+        let args = ArgumentBuilder.build(settings: encoded, input: "/in.m4a", output: "/out.mp4",
+                                         source: source)[0]
+        XCTAssertTrue(args.contains("-vn"), "an audio-only source must not re-encode its cover")
+        XCTAssertFalse(args.contains("libx265"))
+        XCTAssertFalse(args.contains("-tag:v"))
+
+        // Copy is how a cover is carried through; it does not re-encode it.
+        let copied = ConversionSettings(container: .mp4, videoCodec: .copy, audioCodec: .copy, crf: 20)
+        let copyArgs = ArgumentBuilder.build(settings: copied, input: "/in.m4a", output: "/out.mp4",
+                                             source: source)[0]
+        XCTAssertTrue(copyArgs.contains("copy"))
+        XCTAssertFalse(copyArgs.contains("-vn"))
+    }
+
     // MARK: - Stream preservation (opt-in)
 
     func testPreserveAllStreamsOffEmitsNoMapping() {

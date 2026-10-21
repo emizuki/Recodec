@@ -679,6 +679,25 @@ final class ConversionEngineTests: XCTestCase {
         }
     }
 
+    /// The default settings (MP4 + HEVC) used to encode the cover picture itself and abort.
+    /// An audio-only source must convert to an audio-only file, cover or not.
+    func testAudioOnlyCoverConvertsWithAnEncoderVideoSetting() async throws {
+        guard let tools = FFmpegLocator.locate() else { throw XCTSkip("ffmpeg not installed") }
+        let input = try makeLayout(tools, .audioWithCoverM4A)
+        defer { discard(input) }
+        let source = try await MediaProbe(ffprobe: tools.ffprobe).probe(input)
+        XCTAssertNil(source.videoCodecName, "a cover picture is not a video track")
+
+        var settings = ConversionSettings(container: .mp4, videoCodec: .hevc, audioCodec: .copy, crf: 25)
+        settings.preset = .ultrafast
+        let output = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cover-audio-\(UUID().uuidString).mp4")
+        defer { discard(output) }
+        try await FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
+            .convert(input: input, output: output, settings: settings, source: source) { _ in }
+        XCTAssertEqual(try layoutOf(tools, output).kinds, ["audio"])
+    }
+
     /// `-tag:v hvc1` hit the cover picture too, and the MP4 muxer rejects that: an HEVC remux of a
     /// file with cover art aborted. With video Copy the picture must come through untouched.
     func testKeepAllTracksHEVCCopyWithCoverArtIntoMP4() async throws {

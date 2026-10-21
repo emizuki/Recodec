@@ -60,48 +60,56 @@ public enum ArgumentBuilder {
         var videoEncode: [String] = []
         var videoTag: [String] = []
 
-        switch s.videoCodec {
-        case .none:
+        // An audio-only source can still carry a cover picture, which ffmpeg's default
+        // selection would treat as a video stream. Encoding it with the chosen video codec
+        // fails (the MP4 muxer refuses an HEVC attached picture), so ask ffmpeg to drop
+        // video entirely. Copy is different: it is how the cover is carried through.
+        if source.videoCodecName == nil, s.videoCodec != .copy {
             videoEncode = ["-vn"]
-        case .copy:
-            videoEncode = ["-c:v", "copy"]
-            if source.videoCodecName == "hevc", mp4Family.contains(s.container) {
-                videoTag = [tagVideo, "hvc1"]
-            }
-        case .prores:
-            if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
-                videoEncode = ["-c:v", hw, "-profile:v", String(s.proResProfile.ffmpegValue)]
-            } else if let sw = s.videoCodec.softwareEncoder {
-                videoEncode = ["-c:v", sw, "-profile:v", String(s.proResProfile.ffmpegValue)]
-            }
-        default: // h264 / hevc / av1 / vp9
-            if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
-                videoEncode = ["-c:v", hw]
-                videoEncode += s.usesBitrate
-                    ? ["-b:v", "\(s.videoBitrateKbps)k"]
-                    : ["-q:v", String(videoToolboxQuality(fromCRF: s.crf))]
-            } else if let sw = s.videoCodec.softwareEncoder {
-                videoEncode = ["-c:v", sw]
-                if s.videoCodec.supportsPreset {
-                    videoEncode += s.videoCodec == .av1
-                        ? ["-preset", String(s.preset.svtAV1Value)]
-                        : ["-preset", s.preset.x264Name]
+        } else {
+            switch s.videoCodec {
+            case .none:
+                videoEncode = ["-vn"]
+            case .copy:
+                videoEncode = ["-c:v", "copy"]
+                if source.videoCodecName == "hevc", mp4Family.contains(s.container) {
+                    videoTag = [tagVideo, "hvc1"]
                 }
-                if s.usesBitrate {
-                    videoEncode += ["-b:v", "\(s.videoBitrateKbps)k"]
-                } else {
-                    videoEncode += ["-crf", String(s.crf)]
-                    if s.videoCodec == .vp9 { videoEncode += ["-b:v", "0"] }
+            case .prores:
+                if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
+                    videoEncode = ["-c:v", hw, "-profile:v", String(s.proResProfile.ffmpegValue)]
+                } else if let sw = s.videoCodec.softwareEncoder {
+                    videoEncode = ["-c:v", sw, "-profile:v", String(s.proResProfile.ffmpegValue)]
                 }
-            }
-            if s.videoCodec == .h264 || s.videoCodec == .hevc {
-                videoEncode += ["-pix_fmt", "yuv420p"]
-            }
-            if s.videoCodec == .h264 {
-                videoEncode += ["-profile:v", "high"]
-            }
-            if s.videoCodec == .hevc, mp4Family.contains(s.container) {
-                videoTag = [tagVideo, "hvc1"]
+            default: // h264 / hevc / av1 / vp9
+                if s.useHardware, let hw = s.videoCodec.hardwareEncoder {
+                    videoEncode = ["-c:v", hw]
+                    videoEncode += s.usesBitrate
+                        ? ["-b:v", "\(s.videoBitrateKbps)k"]
+                        : ["-q:v", String(videoToolboxQuality(fromCRF: s.crf))]
+                } else if let sw = s.videoCodec.softwareEncoder {
+                    videoEncode = ["-c:v", sw]
+                    if s.videoCodec.supportsPreset {
+                        videoEncode += s.videoCodec == .av1
+                            ? ["-preset", String(s.preset.svtAV1Value)]
+                            : ["-preset", s.preset.x264Name]
+                    }
+                    if s.usesBitrate {
+                        videoEncode += ["-b:v", "\(s.videoBitrateKbps)k"]
+                    } else {
+                        videoEncode += ["-crf", String(s.crf)]
+                        if s.videoCodec == .vp9 { videoEncode += ["-b:v", "0"] }
+                    }
+                }
+                if s.videoCodec == .h264 || s.videoCodec == .hevc {
+                    videoEncode += ["-pix_fmt", "yuv420p"]
+                }
+                if s.videoCodec == .h264 {
+                    videoEncode += ["-profile:v", "high"]
+                }
+                if s.videoCodec == .hevc, mp4Family.contains(s.container) {
+                    videoTag = [tagVideo, "hvc1"]
+                }
             }
         }
 
