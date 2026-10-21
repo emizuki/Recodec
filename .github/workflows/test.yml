@@ -33,3 +33,15 @@ jobs:
         run: |
           xcodegen generate
           xcodebuild -project Recodec.xcodeproj -scheme Recodec -configuration Debug build CODE_SIGNING_ALLOWED=NO
+
+      # Only launching the app checks that the window and its controls are wired up. Signing
+      # stays on here: an unsigned XCTRunner is killed by Gatekeeper before it can connect.
+      # Its own DerivedData keeps it clear of the unsigned build above.
+      - name: UI smoke test
+        run: |
+          xcodebuild test \
+            -project Recodec.xcodeproj \
+            -scheme Recodec \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/RecodecUITestData" \
+            -only-testing:RecodecUITests
