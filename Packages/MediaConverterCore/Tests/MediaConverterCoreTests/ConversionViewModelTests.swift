@@ -13,6 +13,24 @@ final class ConversionViewModelTests: XCTestCase {
         func cancel() {}
     }
 
+    /// Records each convert call's progress callback instead of firing it, so a test can fire it
+    /// after the batch ended — the situation where the `Task { @MainActor }` hop lands late.
+    final class DeferredProgressEngine: ConversionEngineProtocol {
+        nonisolated(unsafe) private var callbacks: [(Double) -> Void] = []
+
+        func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
+                     onProgress: @escaping (Double) -> Void) async throws {
+            callbacks.append(onProgress)
+        }
+
+        func cancel() {}
+
+        /// Fires the progress callback of the `index`-th convert call.
+        func sendProgress(_ fraction: Double, fromCall index: Int) {
+            callbacks[index](fraction)
+        }
+    }
+
     /// Engine that calls an optional hook on its first convert invocation,
     /// then completes normally. nonisolated(unsafe) properties are safe
     /// here because tests call convertAll() sequentially from @MainActor.
@@ -467,6 +485,57 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.convertAll()
         XCTAssertEqual(engine.convertCount, 2, "second Convert must re-run, not no-op on .done items")
         guard case .done = vm.items[0].status else { return XCTFail("expected .done after second convert") }
+    }
+
+    // MARK: - Progress ownership
+
+    /// Lets the `Task { @MainActor }` that `updateProgress` schedules from a callback run.
+    private func settleMainActorTasks() async {
+        for _ in 0..<10 { await Task.yield() }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+
+    /// A progress callback that lands after the row finished must not pull the done row back
+    /// below 1.0, and it must never be applied to a row that is no longer converting.
+    func testAProgressCallbackAfterTheBatchKeepsTheDoneRowAtOne() async {
+        let engine = DeferredProgressEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+        await vm.convertAll()
+        XCTAssertEqual(vm.items[0].progress, 1)
+
+        engine.sendProgress(0.4, fromCall: 0)
+        await settleMainActorTasks()
+
+        XCTAssertEqual(vm.items[0].progress, 1, "a done row must stay at 1.0")
+    }
+
+    /// The callback belongs to the item it was created for, not to the slot that item occupied:
+    /// once the row is removed, its late callback must not write the row that slid into that slot.
+    func testALateProgressCallbackDoesNotWriteTheRowThatMovedIntoTheRemovedSlot() async {
+        let engine = DeferredProgressEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov"), URL(fileURLWithPath: "/b.mov")])
+        await vm.convertAll()
+        XCTAssertEqual(vm.items.map(\.progress), [1, 1])
+
+        let removed = vm.items[0].id
+        vm.removeItem(id: removed)
+        XCTAssertEqual(vm.items.count, 1)
+
+        engine.sendProgress(0.4, fromCall: 0)
+        await settleMainActorTasks()
+
+        XCTAssertEqual(vm.items.count, 1)
+        XCTAssertEqual(vm.items[0].progress, 1, "the late callback belonged to the removed row")
     }
 
     // MARK: - Source-aware default audio codec

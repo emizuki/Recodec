@@ -32,7 +32,8 @@ extension ConversionError: LocalizedError {
 // MARK: - Private helpers
 
 /// Owns the locked process/cancelled state so NSLock never lives inside an async function.
-private final class ConversionState: @unchecked Sendable {
+/// Internal rather than private so the cancel-before-launch regression test can reach it.
+final class ConversionState: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
     private var cancelled = false
@@ -68,12 +69,17 @@ private final class ConversionState: @unchecked Sendable {
         return wasCancelled
     }
 
-    /// Mark as cancelled and terminate the current process if one is running.
+    /// Mark as cancelled and terminate the current process, but only if it is actually running:
+    /// `begin()` stores the process before `run()`, and terminating a process that was never
+    /// launched raises. A cancel landing in that pre-launch window is closed by `runProcess`,
+    /// which checks the flag again once `run()` returns.
     func cancel() {
         lock.lock()
         cancelled = true
-        process?.terminate()
+        let process = self.process
+        let isRunning = process?.isRunning == true
         lock.unlock()
+        if isRunning { process?.terminate() }
     }
 }
 
@@ -198,6 +204,13 @@ public final class FFmpegConversionEngine: ConversionEngineProtocol {
                 stderr.fileHandleForReading.readabilityHandler = nil
                 process.terminationHandler = nil
                 cont.resume(throwing: error)
+                return
+            }
+            // Close the pre-launch cancel window: a cancel() that landed between begin() and
+            // run() found no running process to terminate (terminating an unlaunched process
+            // raises), so stop this run now instead of letting ffmpeg finish the whole job.
+            if state.isCancelled && process.isRunning {
+                process.terminate()
             }
         }
 
