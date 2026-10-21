@@ -13,16 +13,19 @@ public enum ConversionError: Error {
 
 extension ConversionError: LocalizedError {
     /// What the file row shows. For a failed run it is the first line ffmpeg logged at error level
-    /// (see `FFmpegConversionEngine.runProcess`), without the `[muxer @ 0x…]` logger tag.
+    /// (see `FFmpegConversionEngine.runProcess`), without the `[muxer @ 0x…]` logger tag. libsvtav1
+    /// prints `Svt[info]:` banner lines at that level too, so those are skipped to reach the real
+    /// reason; a log that is nothing but banner falls back to its first line.
     public var errorDescription: String? {
         switch self {
         case .cancelled:
             return "Cancelled"
         case .ffmpegFailed(_, let stderrHead):
-            let first = stderrHead
+            let lines = stderrHead
                 .split(whereSeparator: \.isNewline)
-                .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            guard let line = first else { return "ffmpeg failed" }
+                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            guard let first = lines.first else { return "ffmpeg failed" }
+            let line = lines.first { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("Svt[info]:") } ?? first
             return String(line).replacingOccurrences(of: #"^\[[^\]]* @ 0x[0-9a-fA-F]+\] "#, with: "",
                                                      options: .regularExpression)
         }
