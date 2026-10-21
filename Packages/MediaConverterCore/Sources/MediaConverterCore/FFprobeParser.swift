@@ -3,7 +3,7 @@ import Foundation
 public enum FFprobeParser {
     private struct Probe: Decodable {
         struct Tags: Decodable { let language: String? }
-        struct Disposition: Decodable { let `default`: Int? }
+        struct Disposition: Decodable { let `default`: Int?; let attached_pic: Int? }
         struct Stream: Decodable {
             let index: Int?
             let codec_type: String?
@@ -48,7 +48,11 @@ public enum FFprobeParser {
     public static func parse(_ data: Data, firstVideoFrame frameData: Data? = nil) throws -> MediaInfo {
         let probe = try JSONDecoder().decode(Probe.self, from: data)
         // The first video stream, and its position: `-show_frames` names the stream by index.
-        let firstVideo = probe.streams?.enumerated().first { $0.element.codec_type == "video" }
+        // Cover art in an m4a/mp4 is a "video" stream flagged `attached_pic`; it is not a video
+        // track, so skip it (an audio-only file with a cover then has no video at all).
+        let firstVideo = probe.streams?.enumerated().first {
+            $0.element.codec_type == "video" && $0.element.disposition?.attached_pic != 1
+        }
         let videoStream = firstVideo?.element
         let video = videoStream?.codec_name
         // The decoded frame's transfer function beats the stream's: HLG can be signalled only by an

@@ -14,12 +14,13 @@ public struct MediaProbe {
         guard info.videoCodecName != nil else { return info }
 
         // The transfer function of the first decoded video frame, in a read of its own. It cannot share
-        // the call above: `-select_streams v:0` would hide the audio and subtitle streams from it, and
+        // the call above: `-select_streams V:0` would hide the audio and subtitle streams from it, and
         // `-read_intervals %+#1` counts packets, so with the audio first the one packet read is audio and
-        // no frame comes back. Measured (median of 9) on a 4K 10-bit HEVC clip: 25 ms for the call above,
-        // 48 ms for this one (it decodes a frame). Best effort: a file whose frame cannot be read keeps
-        // its stream-level value instead of becoming unreadable.
-        guard let frame = try? run(["-v", "quiet", "-print_format", "json", "-select_streams", "v:0",
+        // no frame comes back. `V` (uppercase) excludes attached pictures, so cover art in an m4a/mp4 is
+        // never mistaken for the video whose frame is wanted. Measured (median of 9) on a 4K 10-bit HEVC
+        // clip: 25 ms for the call above, 48 ms for this one (it decodes a frame). Best effort: a file
+        // whose frame cannot be read keeps its stream-level value instead of becoming unreadable.
+        guard let frame = try? run(["-v", "quiet", "-print_format", "json", "-select_streams", "V:0",
                                     "-show_frames", "-read_intervals", "%+#1",
                                     "-show_entries", "frame=stream_index,media_type,color_transfer",
                                     fileURL.path]) else { return info }
