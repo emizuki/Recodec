@@ -51,6 +51,25 @@ final class ConversionViewModelTests: XCTestCase {
         func cancel() {}
     }
 
+    /// Engine that runs an optional hook on its first convert invocation, then completes
+    /// normally. Lets a test add a file while the batch is already running.
+    final class AppendingEngine: ConversionEngineProtocol {
+        nonisolated(unsafe) var convertCount = 0
+        /// Hook is set once from @MainActor before convertAll() runs. It runs on the main
+        /// actor so it can await `loadFiles` while the batch is suspended in `convert`.
+        nonisolated(unsafe) var onFirstConvert: (@MainActor () async -> Void)?
+
+        func convert(input: URL, output: URL, settings: ConversionSettings, source: MediaInfo,
+                     onProgress: @escaping (Double) -> Void) async throws {
+            convertCount += 1
+            if convertCount == 1, let hook = onFirstConvert {
+                await hook()
+            }
+            onProgress(1.0)
+        }
+        func cancel() {}
+    }
+
     func testLoadThenConvertAll() async {
         let engine = FakeEngine()
         let vm = ConversionViewModel(
@@ -357,7 +376,7 @@ final class ConversionViewModelTests: XCTestCase {
             probe: { _ in MediaInfo() },
             toolsAvailable: true,
             fileExists: { _ in false })
-        // Custom CRF of 18 (not the h264 default of 23) set under mp4/h264.
+        // Custom CRF of 18 (not the h264 default of 20) set under mkv/h264.
         vm.settings = ConversionSettings(container: .mkv, videoCodec: .h264, audioCodec: .aac, crf: 18)
         vm.containerChanged()
         XCTAssertEqual(vm.settings.videoCodec, .h264,
@@ -450,7 +469,7 @@ final class ConversionViewModelTests: XCTestCase {
             toolsAvailable: true,
             fileExists: { _ in false })
         // Simulate: was av1 (CRF up to 63), switch to h264 (CRF up to 51).
-        // After videoCodecChanged(), crf must equal h264.defaultCRF (23).
+        // After videoCodecChanged(), crf must equal h264.defaultCRF.
         vm.settings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 60)
         vm.videoCodecChanged()
         let range = VideoCodec.h264.crfRange
@@ -507,6 +526,31 @@ final class ConversionViewModelTests: XCTestCase {
         await vm.convertAll()
         XCTAssertEqual(engine.convertCount, 2, "second Convert must re-run, not no-op on .done items")
         guard case .done = vm.items[0].status else { return XCTFail("expected .done after second convert") }
+    }
+
+    /// Regression: a file loaded while a batch is running must still be converted in that run
+    /// once it has been read. The old loop snapshotted `items.indices`, so an item appended by
+    /// `loadFiles` during the batch was never reached.
+    func testFileLoadedDuringBatchIsConvertedInTheSameRun() async {
+        let engine = AppendingEngine()
+        let vm = ConversionViewModel(
+            engine: engine,
+            probe: { _ in MediaInfo(durationSeconds: 5, videoCodecName: "h264", audioCodecName: "aac") },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov"), URL(fileURLWithPath: "/b.mov")])
+        engine.onFirstConvert = { [weak vm] in
+            await vm?.loadFiles([URL(fileURLWithPath: "/c.mov")])
+        }
+
+        await vm.convertAll()
+
+        XCTAssertEqual(vm.items.count, 3)
+        XCTAssertEqual(engine.convertCount, 3, "the file appended during the batch must be converted too")
+        for item in vm.items {
+            guard case .done = item.status else { return XCTFail("expected done, got \(item.status)") }
+        }
     }
 
     // MARK: - Progress ownership
