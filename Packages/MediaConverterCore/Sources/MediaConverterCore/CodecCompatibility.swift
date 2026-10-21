@@ -101,11 +101,35 @@ public enum CodecCompatibility {
         return names[codec] ?? codec.uppercased()
     }
 
+    /// Settings that would leave no output stream at all: both the video and the audio the
+    /// source has are turned off. ffmpeg would fail with "Output file does not contain any
+    /// stream" (or write an empty file), so it is caught before the run. One remaining stream
+    /// is enough, even when the settings codec for the other kind has nothing to work on.
+    public static func missingRequestedStreamProblem(_ settings: ConversionSettings,
+                                                     source: MediaInfo) -> String? {
+        let videoOut = source.videoCodecName != nil && settings.videoCodec != .none
+        let audioOut = source.audioCodecName != nil && settings.audioCodec != .none
+        guard !videoOut && !audioOut else { return nil }
+
+        switch (source.videoCodecName != nil, source.audioCodecName != nil) {
+        case (false, false):
+            return "This file has no video or audio stream."
+        case (true, true):
+            return "Nothing to write: both video and audio are turned off."
+        case (false, true):
+            return "This file has no video, and audio is turned off."
+        case (true, false):
+            return "This file has no audio, and video is turned off."
+        }
+    }
+
     /// Why this file cannot be converted with these settings although the codec lists accept them:
     /// a track of its own that the target container cannot hold. nil when nothing stands in the way.
     /// Only checked with every stream kept; otherwise ffmpeg picks its own streams.
     public static func sourceProblem(_ settings: ConversionSettings, source: MediaInfo) -> String? {
-        guard settings.preserveAllStreams, settings.container != .gif else { return nil }
+        guard settings.container != .gif else { return nil }
+        if let problem = missingRequestedStreamProblem(settings, source: source) { return problem }
+        guard settings.preserveAllStreams else { return nil }
         let container = settings.container
         let target = container.fileExtension.uppercased()
 
