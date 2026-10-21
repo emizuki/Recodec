@@ -25,6 +25,38 @@ final class FFprobeParserTests: XCTestCase {
         XCTAssertFalse(info.isHDR)
     }
 
+    /// An m4a/mp4 cover is stored as a video stream with `attached_pic` set; there is no video to
+    /// convert, so it must not be reported as one (it would otherwise be read as, say, png video).
+    func testCoverArtIsNotAVideoStream() throws {
+        let json = """
+        {"streams":[{"index":0,"codec_type":"audio","codec_name":"aac","channels":2},
+                    {"index":1,"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}}],
+         "format":{"duration":"3.0"}}
+        """.data(using: .utf8)!
+        let info = try FFprobeParser.parse(json)
+        XCTAssertNil(info.videoCodecName)
+        XCTAssertEqual(info.audioCodecName, "aac")
+        XCTAssertNil(info.colorTransfer)
+    }
+
+    /// A real video stream wins over cover art listed before it, and the frame probe's
+    /// `stream_index` must still match the real stream's own index (1 here, not 0).
+    func testRealVideoBeatsACoverArtStream() throws {
+        let json = """
+        {"streams":[{"index":0,"codec_type":"video","codec_name":"png","disposition":{"attached_pic":1}},
+                    {"index":1,"codec_type":"video","codec_name":"hevc","color_transfer":"bt709"},
+                    {"index":2,"codec_type":"audio","codec_name":"aac"}],
+         "format":{"duration":"5.0"}}
+        """.data(using: .utf8)!
+        let frames = """
+        {"frames":[{"stream_index":1,"media_type":"video","color_transfer":"smpte2084"}]}
+        """.data(using: .utf8)!
+        let info = try FFprobeParser.parse(json, firstVideoFrame: frames)
+        XCTAssertEqual(info.videoCodecName, "hevc")
+        XCTAssertEqual(info.colorTransfer, "smpte2084")
+        XCTAssertEqual(info.audioCodecName, "aac")
+    }
+
     func testParsesColorTransferAndFlagsHDR() throws {
         // Shape of a macOS Screenshots-app HDR recording / iPhone Dolby Vision clip.
         let pq = """

@@ -28,6 +28,9 @@ public final class ConversionViewModel: ObservableObject {
     @Published public var items: [InputItem] = []
     @Published public var settings: ConversionSettings = .iPhoneDefault
     @Published public var isConverting: Bool = false
+    /// Whether a file is still being read. Convert waits for it: an item being probed has no
+    /// `info` yet, so `convertAll` would silently skip it.
+    public var isProbing: Bool { items.contains { $0.status == .probing } }
     public let toolsAvailable: Bool
     /// Whether the located ffmpeg has the `scale_vt` filter tone mapping needs. Without it the
     /// toggle is never switched on automatically (every run would fail) and the UI disables it.

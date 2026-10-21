@@ -126,6 +126,28 @@ final class ConversionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.items.first?.status, .ready)
     }
 
+    /// Convert must not start while a file is still being read: the item has no info yet, so
+    /// the batch would silently skip it. The footer uses `isProbing` to hold the button.
+    func testIsProbingIsTrueWhileAFileIsReadAndFalseWhenReady() async {
+        var probingDuringRead: Bool?
+        var vm: ConversionViewModel!
+        vm = ConversionViewModel(
+            engine: FakeEngine(),
+            probe: { _ in
+                probingDuringRead = vm.isProbing
+                return MediaInfo(videoCodecName: "h264", audioCodecName: "aac")
+            },
+            toolsAvailable: true,
+            fileExists: { _ in false })
+
+        XCTAssertFalse(vm.isProbing)
+        await vm.loadFiles([URL(fileURLWithPath: "/a.mov")])
+
+        XCTAssertEqual(probingDuringRead, true)
+        XCTAssertEqual(vm.items.first?.status, .ready)
+        XCTAssertFalse(vm.isProbing)
+    }
+
     /// With Copy the verdict depends on the file, so a batch can mix ready and not-ready files.
     /// Judging the whole batch by its first file hid the second file's problem.
     func testCompatibilityIsJudgedPerFile() async {

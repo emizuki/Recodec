@@ -46,7 +46,8 @@ struct ContentView: View {
                 Task { await viewModel.convertAll() }
             }
             .keyboardShortcut(.defaultAction)
-            .disabled(viewModel.items.isEmpty || viewModel.isConverting || !viewModel.toolsAvailable)
+            .disabled(viewModel.items.isEmpty || viewModel.isConverting || viewModel.isProbing
+                        || !viewModel.toolsAvailable)
         }
     }
 
