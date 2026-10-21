@@ -31,4 +31,38 @@ final class ProgressParserTests: XCTestCase {
         p.consume("out_time_us=1000000\nprogress=continue\n")
         XCTAssertEqual(p.fraction, 0.0)
     }
+    func testKeySplitAcrossChunksIsReassembled() {
+        var p = ProgressParser(durationSeconds: 1.0)
+        p.consume("out_time_u")
+        XCTAssertEqual(p.fraction, 0.0, "an incomplete line must not be parsed")
+        p.consume("s=1000000\n")
+        XCTAssertEqual(p.fraction, 1.0, accuracy: 0.001)
+    }
+    func testValueSplitAcrossChunksIsNotTruncated() {
+        var p = ProgressParser(durationSeconds: 1.0)
+        p.consume("out_time_us=10")
+        p.consume("00000\n")
+        XCTAssertEqual(p.fraction, 1.0, accuracy: 0.001)
+    }
+    func testCarriageReturnLineEndingsAreAccepted() {
+        var p = ProgressParser(durationSeconds: 1.0)
+        p.consume("out_time_us=1000000\r\nprogress=end\r\n")
+        XCTAssertEqual(p.fraction, 1.0, accuracy: 0.001)
+        XCTAssertTrue(p.isFinished)
+    }
+    func testProgressEndSplitAcrossChunks() {
+        var p = ProgressParser(durationSeconds: 1.0)
+        p.consume("progress=en")
+        XCTAssertFalse(p.isFinished)
+        p.consume("d\n")
+        XCTAssertTrue(p.isFinished)
+        XCTAssertEqual(p.fraction, 1.0, accuracy: 0.001)
+    }
+    func testCarriageReturnSplitAcrossChunks() {
+        var p = ProgressParser(durationSeconds: 1.0)
+        p.consume("out_time_us=1000000\r")
+        p.consume("\nprogress=end\r\n")
+        XCTAssertEqual(p.fraction, 1.0, accuracy: 0.001)
+        XCTAssertTrue(p.isFinished)
+    }
 }
