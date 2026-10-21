@@ -52,3 +52,20 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  # Launches the real app and looks at the window; the one thing SwiftUI previews and
+  # the package suite cannot check.
+  RecodecUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - AppUITests
+    dependencies:
+      - target: Recodec
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.emizuki.RecodecUITests
+        TEST_TARGET_NAME: Recodec
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
