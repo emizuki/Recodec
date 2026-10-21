@@ -53,6 +53,10 @@ final class ConversionEngineTests: XCTestCase {
         settings.videoBitrateKbps = 800
         XCTAssertTrue(settings.effectiveTwoPass)
 
+        // Other runs or leftovers may already own `recodec-pass-*` names in the shared temp
+        // directory; only files this conversion creates prove the cleanup assertion.
+        let passlogsBefore = Set(passlogNames())
+
         let progressBox = ProgressBox()
         let engine = FFmpegConversionEngine(ffmpeg: tools.ffmpeg)
         try await engine.convert(input: input, output: output, settings: settings, source: source) { f in
@@ -63,9 +67,8 @@ final class ConversionEngineTests: XCTestCase {
         let result = try await MediaProbe(ffprobe: tools.ffprobe).probe(output)
         XCTAssertEqual(result.videoCodecName, "h264")
         XCTAssertGreaterThan(progressBox.max, 0.0)
-        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()))?
-            .filter { $0.hasPrefix("recodec-pass-") } ?? []
-        XCTAssertTrue(leftovers.isEmpty, "passlog temp files must be removed")
+        XCTAssertTrue(Set(passlogNames()).subtracting(passlogsBefore).isEmpty,
+                      "passlog temp files must be removed")
     }
 
     /// Regression: when ffmpeg exits with a non-zero status the stderrHead must be
@@ -123,6 +126,26 @@ final class ConversionEngineTests: XCTestCase {
         }
     }
 
+    /// libsvtav1 logs `Svt[info]:` banner lines even at error log level, so the first line of
+    /// stderr is usually not what went wrong. The user must see the muxer's own sentence.
+    func testEncoderBannerLinesDoNotHideTheRealReason() {
+        let stderr = """
+        Svt[info]: SVT [version]: SVT-AV1 Encoder Lib v2.3.0
+        Svt[info]: SVT [config]: width / height / fps numerator / denominator : 1920 / 1080 / 30 / 1
+        [webm @ 0x7f8a1c008000] Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and WebVTT subtitles are supported for WebM.
+        """
+        let error = ConversionError.ffmpegFailed(code: 1, stderrHead: stderr)
+        XCTAssertEqual(error.localizedDescription,
+                       "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and WebVTT subtitles are supported for WebM.")
+    }
+
+    /// When every line is a banner there is no better line to show than the first one.
+    func testEncoderBannerOnlyLogFallsBackToTheFirstLine() {
+        let stderr = "Svt[info]: SVT [version]: SVT-AV1 Encoder Lib v2.3.0\nSvt[info]: SVT [config]: preset 8\n"
+        let error = ConversionError.ffmpegFailed(code: 1, stderrHead: stderr)
+        XCTAssertEqual(error.localizedDescription, "Svt[info]: SVT [version]: SVT-AV1 Encoder Lib v2.3.0")
+    }
+
     // MARK: - Cancel before launch
 
     /// Regression: `cancel()` used to terminate whatever process was stored, even one that had
@@ -178,6 +201,12 @@ final class ConversionEngineTests: XCTestCase {
         for url in urls where FileManager.default.fileExists(atPath: url.path) {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    /// Names of the passlog files the engine writes into the shared temporary directory.
+    private func passlogNames() -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()))?
+            .filter { $0.hasPrefix("recodec-pass-") } ?? []
     }
 
     /// Skips unless the located ffmpeg ships the VideoToolbox filter the graph needs.
