@@ -57,13 +57,34 @@ public enum CodecCompatibility {
 
     /// Measured against ffmpeg 9.0.2 (stream copy, then `-c:s <encoder>`): MP4, MOV and M4V hold only
     /// mov_text, WebM only WebVTT, Matroska every text format but mov_text; PGS is kept by Matroska
-    /// and rejected by the rest. Codecs outside these two sets (VobSub, DVB, ...) were not measured and
-    /// are left to ffmpeg, which reports its own reason if the container refuses them.
+    /// and rejected by the rest. The bitmap and teletext codecs below have their own measured target
+    /// lists. Codecs outside these sets are left to ffmpeg, which reports its own reason if the
+    /// container refuses them.
     private static let textSubtitleCodecs: Set<String> = ["subrip", "ass", "webvtt", "mov_text"]
     private static let bitmapSubtitleCodecs: Set<String> = ["hdmv_pgs_subtitle"]
 
+    /// Containers that keep each non-text codec as it is, measured on ffmpeg 9.0.2 by remuxing one
+    /// codec at a time. VobSub goes into MP4 and Matroska, DVB subtitles only into Matroska, EIA-608
+    /// (the MOV caption track) only into MOV; SAMI and DVB teletext are kept by no muxer at all.
+    private static let measuredSubtitleTargets: [String: Set<Container>] = [
+        "sami": [],
+        "dvd_subtitle": [.mp4, .mkv],
+        "dvb_subtitle": [.mkv],
+        "eia_608": [.mov],
+        "dvb_teletext": [],
+    ]
+
+    /// Containers that keep `codec`, in picker order; nil when the codec is not in the measured table.
+    static func subtitleTargets(for codec: String) -> [Container]? {
+        guard let targets = measuredSubtitleTargets[codec] else { return nil }
+        return Container.allCases.filter(targets.contains)
+    }
+
     public static func subtitleHandling(for codec: String, in container: Container) -> SubtitleHandling {
         if bitmapSubtitleCodecs.contains(codec) { return container == .mkv ? .copy : .unsupported }
+        if let targets = subtitleTargets(for: codec) {
+            return targets.contains(container) ? .copy : .unsupported
+        }
         guard textSubtitleCodecs.contains(codec) else { return .copy }
         switch container {
         case .mp4, .mov, .m4v: return codec == "mov_text" ? .copy : .convert(to: "mov_text")
@@ -146,7 +167,11 @@ public enum CodecCompatibility {
     /// nil when nothing stands in the way. The first two checks run whether or not every stream
     /// is kept; the per-track checks below only apply with Keep all on.
     public static func sourceProblem(_ settings: ConversionSettings, source: MediaInfo) -> String? {
-        guard settings.container != .gif else { return nil }
+        if settings.container == .gif {
+            // The GIF path maps no video and drops audio: without a real video stream ffmpeg
+            // would fail with "Output file does not contain any stream".
+            return source.videoCodecName == nil ? "GIF needs a video track; this file has none." : nil
+        }
         if let problem = missingRequestedStreamProblem(settings, source: source) { return problem }
         if let problem = copiedStreamProblem(settings, source: source) { return problem }
         guard settings.preserveAllStreams else { return nil }
@@ -156,7 +181,15 @@ public enum CodecCompatibility {
         if container.supportsSubtitles {
             for (index, codec) in source.subtitleCodecs.enumerated()
             where subtitleHandling(for: codec, in: container) == .unsupported {
-                return "Subtitle track \(index + 1) (\(displayName(ofCodec: codec))) can't go into \(target). "
+                let name = displayName(ofCodec: codec)
+                if let targets = subtitleTargets(for: codec) {
+                    if targets.isEmpty {
+                        return "Subtitle track \(index + 1) (\(name)) can't go anywhere. Turn off Keep all tracks."
+                    }
+                    let list = targets.map { $0.fileExtension.uppercased() }.joined(separator: " or ")
+                    return "Subtitle track \(index + 1) (\(name)) can't go into \(target). Use \(list)."
+                }
+                return "Subtitle track \(index + 1) (\(name)) can't go into \(target). "
                     + "Use MKV, or turn off Keep all tracks."
             }
         }

@@ -284,6 +284,100 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source))
     }
 
+    /// Measured on ffmpeg 9.0.2 (one codec at a time, remuxed): SAMI and DVB teletext are kept by no
+    /// muxer; VobSub goes into MP4 and Matroska, DVB subtitles only into Matroska, and the EIA-608
+    /// caption track only into MOV. Every cell is checked so a stray change shows up here.
+    func testNonTextSubtitleHandlingMatchesTheMeasuredTable() {
+        let supported: [String: Set<Container>] = [
+            "sami": [],
+            "dvd_subtitle": [.mp4, .mkv],
+            "dvb_subtitle": [.mkv],
+            "eia_608": [.mov],
+            "dvb_teletext": [],
+        ]
+        for (codec, containers) in supported {
+            for container in Container.allCases {
+                XCTAssertEqual(CodecCompatibility.subtitleHandling(for: codec, in: container),
+                               containers.contains(container) ? .copy : .unsupported,
+                               "\(codec) into \(container)")
+            }
+        }
+    }
+
+    /// One refused cell per measured codec: the reason names a target that actually works, or says
+    /// none does. The old "Use MKV" advice was wrong for EIA-608 (Matroska refuses it).
+    func testUnsupportedNonTextSubtitleNamesAWorkingTargetOrNone() {
+        func reason(_ codec: String, in container: Container) -> String? {
+            let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                                   subtitleLanguages: ["eng"], subtitleCodecs: [codec])
+            return CodecCompatibility.sourceProblem(keepAll(container, video: .h264, audio: .aac),
+                                                    source: source)
+        }
+        func expect(_ codec: String, in container: Container, contains fragments: [String]) -> String {
+            let problem = reason(codec, in: container)
+            XCTAssertNotNil(problem, "\(codec) into \(container)")
+            for fragment in fragments {
+                XCTAssertTrue(problem?.contains(fragment) == true, "\(codec) into \(container): \(problem ?? "nil")")
+            }
+            XCTAssertLessThanOrEqual(problem?.count ?? 0, 85, problem ?? "")
+            return problem ?? ""
+        }
+        XCTAssertTrue(expect("sami", in: .mp4, contains: ["SAMI", "anywhere"]).hasPrefix("Subtitle track 1 (SAMI)"))
+        expect("dvd_subtitle", in: .mov, contains: ["VobSub", "MP4 or MKV"])
+        XCTAssertNil(reason("dvd_subtitle", in: .mp4))
+        expect("dvb_subtitle", in: .mp4, contains: ["DVB_SUBTITLE", "Use MKV"])
+        let eia = expect("eia_608", in: .mkv, contains: ["EIA_608", "Use MOV"])
+        XCTAssertFalse(eia.contains("Use MKV"), eia)
+        expect("dvb_teletext", in: .mkv, contains: ["DVB_TELETEXT", "anywhere"])
+        // Every bad cell that has a working target names exactly that target.
+        expect("eia_608", in: .mp4, contains: ["Use MOV"])
+        expect("dvb_subtitle", in: .mov, contains: ["Use MKV"])
+    }
+
+    func testUnknownSubtitleCodecIsStillLeftToFfmpeg() {
+        for container in Container.allCases {
+            XCTAssertEqual(CodecCompatibility.subtitleHandling(for: "vobsub", in: container), .copy,
+                           "\(container)")
+        }
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                               subtitleLanguages: ["eng"], subtitleCodecs: ["vobsub"])
+        XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.mp4, video: .h264, audio: .aac), source: source))
+    }
+
+    func testUnsupportedNonTextSubtitlesDoNotBlockWithoutKeepAll() {
+        for codec in ["sami", "dvd_subtitle", "dvb_subtitle", "eia_608", "dvb_teletext"] {
+            let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac",
+                                   subtitleLanguages: ["eng"], subtitleCodecs: [codec])
+            var s = keepAll(.mkv, video: .h264, audio: .aac)
+            s.preserveAllStreams = false
+            XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source), codec)
+        }
+    }
+
+    /// The GIF command maps no video and drops audio, so an audio-only source leaves ffmpeg with
+    /// nothing to write. The preflight catches it for both Keep all values.
+    func testGIFSourceWithoutVideoIsBlockedBeforeTheRun() {
+        let audioOnly = MediaInfo(audioCodecName: "aac", audioCodecs: ["aac"])
+        for preserveAll in [false, true] {
+            var s = ConversionSettings(container: .gif, videoCodec: .none, audioCodec: .none, crf: 20)
+            s.preserveAllStreams = preserveAll
+            XCTAssertTrue(CodecCompatibility.isValidCombo(s), "the combo itself stays valid")
+            let problem = CodecCompatibility.sourceProblem(s, source: audioOnly)
+            XCTAssertTrue(problem?.contains("GIF") == true && problem?.contains("video") == true,
+                          "\(preserveAll): \(problem ?? "nil")")
+            XCTAssertLessThanOrEqual(problem?.count ?? 0, 85, problem ?? "")
+        }
+    }
+
+    func testGIFSourceWithVideoIsNotBlocked() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac")
+        for preserveAll in [false, true] {
+            var s = ConversionSettings(container: .gif, videoCodec: .none, audioCodec: .none, crf: 20)
+            s.preserveAllStreams = preserveAll
+            XCTAssertNil(CodecCompatibility.sourceProblem(s, source: source), "\(preserveAll)")
+        }
+    }
+
     /// The file row shows a reason in two lines of 240 pt of caption text and cuts the rest: the
     /// first version of these messages lost "...turn off Keep all tracks" at about 95 characters,
     /// which is the part that says what to do. Keep every one well under that.
