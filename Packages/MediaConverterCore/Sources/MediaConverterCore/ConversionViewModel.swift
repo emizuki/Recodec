@@ -146,11 +146,12 @@ public final class ConversionViewModel: ObservableObject {
             }
             let input = items[index].url
             let output = OutputNamer.outputURL(forInput: input, container: settings.container, fileExists: fileExists)
+            let id = items[index].id
             items[index].status = .converting
             items[index].progress = 0
             do {
                 try await engine.convert(input: input, output: output, settings: settings, source: info) { [weak self] fraction in
-                    Task { @MainActor in self?.updateProgress(at: index, to: fraction) }
+                    Task { @MainActor in self?.updateProgress(id: id, to: fraction) }
                 }
                 items[index].status = .done(output)
                 items[index].progress = 1
@@ -245,8 +246,13 @@ public final class ConversionViewModel: ObservableObject {
         items.removeAll()
     }
 
-    private func updateProgress(at index: Int, to fraction: Double) {
-        guard items.indices.contains(index) else { return }
-        items[index].progress = fraction
+    /// Progress belongs to the item, never to the array slot it had when the callback was made:
+    /// the row may have finished (its late callback must not undo 1.0), been removed, or been
+    /// re-ordered by a removal. The engine also reports monotonic fractions, so a stale late
+    /// value can never pull a running row backwards.
+    private func updateProgress(id: UUID, to fraction: Double) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard items[index].status == .converting else { return }
+        items[index].progress = max(items[index].progress, fraction)
     }
 }

@@ -123,6 +123,40 @@ final class ConversionEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - Cancel before launch
+
+    /// Regression: `cancel()` used to terminate whatever process was stored, even one that had
+    /// been handed to `begin()` but not launched yet. `Process.terminate()` on an unlaunched
+    /// process raises an Objective-C exception, aborting the app. A cancel that races the launch
+    /// must only record the request; `runProcess` closes the window once `run()` returns.
+    func testCancelBeforeTheProcessLaunchesDoesNotTerminateIt() {
+        let state = ConversionState()
+        state.reset()
+        state.begin(Process())
+
+        state.cancel()
+
+        XCTAssertTrue(state.isCancelled)
+    }
+
+    /// The guard must not turn cancel into a no-op for a process that is actually running.
+    func testCancelTerminatesARunningProcess() throws {
+        let state = ConversionState()
+        state.reset()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        defer { if process.isRunning { process.terminate() } }
+        state.begin(process)
+
+        state.cancel()
+        process.waitUntilExit()
+
+        XCTAssertFalse(process.isRunning)
+        XCTAssertEqual(process.terminationReason, .uncaughtSignal)
+    }
+
     // MARK: - HDR tone mapping (real ffmpeg + VideoToolbox)
 
     private func run(_ exe: String, _ args: [String]) throws -> String {
