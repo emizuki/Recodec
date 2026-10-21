@@ -335,6 +335,49 @@ final class CodecCompatibilityTests: XCTestCase {
         XCTAssertNil(CodecCompatibility.sourceProblem(keepAll(.webm, video: .vp9, audio: .none), source: source))
     }
 
+    func testSettingsThatLeaveNoOutputStreamAreBlockedEvenWithoutKeepAll() {
+        let source = MediaInfo(videoCodecName: "h264", audioCodecName: "aac")
+        let muted = ConversionSettings(container: .mp4, videoCodec: .none, audioCodec: .none, crf: 23)
+        let bothOff = CodecCompatibility.sourceProblem(muted, source: source)
+        XCTAssertTrue(bothOff?.contains("turned off") == true, bothOff ?? "nil")
+        XCTAssertLessThanOrEqual(bothOff?.count ?? 0, 85)
+
+        // Keep all does not rescue a run with no stream to write.
+        var keepAllMuted = muted
+        keepAllMuted.preserveAllStreams = true
+        XCTAssertNotNil(CodecCompatibility.sourceProblem(keepAllMuted, source: source))
+
+        // Audio off in an audio-only file.
+        let audioOnly = MediaInfo(audioCodecName: "aac", audioCodecs: ["aac"])
+        let audioOff = ConversionSettings(container: .m4a, videoCodec: .copy, audioCodec: .none, crf: 23)
+        let noAudio = CodecCompatibility.sourceProblem(audioOff, source: audioOnly)
+        XCTAssertTrue(noAudio?.contains("audio") == true && noAudio?.contains("turned off") == true,
+                      noAudio ?? "nil")
+
+        // Video off in a video-only file.
+        let videoOnly = MediaInfo(videoCodecName: "h264")
+        let videoOff = ConversionSettings(container: .mp4, videoCodec: .none, audioCodec: .copy, crf: 23)
+        let noVideo = CodecCompatibility.sourceProblem(videoOff, source: videoOnly)
+        XCTAssertTrue(noVideo?.contains("video") == true && noVideo?.contains("turned off") == true,
+                      noVideo ?? "nil")
+    }
+
+    /// Measured: one remaining stream is enough. ffmpeg writes the audio of an audio-only file
+    /// and the video of a video-only file even when the other settings codec has no source.
+    func testOneRemainingStreamIsEnoughForAnAbsentOne() {
+        let audioOnly = MediaInfo(audioCodecName: "aac", audioCodecs: ["aac"])
+        var audioSettings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        XCTAssertNil(CodecCompatibility.sourceProblem(audioSettings, source: audioOnly))
+        audioSettings.preserveAllStreams = true
+        XCTAssertNil(CodecCompatibility.sourceProblem(audioSettings, source: audioOnly))
+
+        let videoOnly = MediaInfo(videoCodecName: "h264")
+        var videoSettings = ConversionSettings(container: .mp4, videoCodec: .h264, audioCodec: .aac, crf: 23)
+        XCTAssertNil(CodecCompatibility.sourceProblem(videoSettings, source: videoOnly))
+        videoSettings.preserveAllStreams = true
+        XCTAssertNil(CodecCompatibility.sourceProblem(videoSettings, source: videoOnly))
+    }
+
     func testAudioOnlyContainersWithOneTrackOnlyLookAtTheFirstTrack() {
         // MP3, FLAC and WAV hold one audio stream: the builder maps `0:a:0`, so a second track is never copied.
         let source = MediaInfo(audioCodecName: "mp3", audioCodecs: ["mp3", "ac3"])

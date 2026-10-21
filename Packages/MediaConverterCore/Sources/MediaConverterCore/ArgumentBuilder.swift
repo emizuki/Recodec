@@ -221,7 +221,9 @@ public enum ArgumentBuilder {
             } else {
                 // Audio-only targets carry no video or subtitles. MP3, FLAC and WAV hold
                 // exactly one audio stream; M4A takes any number.
-                mapArgs = ["-map", s.container == .m4a ? "0:a" : "0:a:0"]
+                // Optional (`?`) for the same reason as the audio map above: a file with no
+                // audio stream must not abort at map parsing even if validation is bypassed.
+                mapArgs = ["-map", s.container == .m4a ? "0:a?" : "0:a:0?"]
             }
         }
 

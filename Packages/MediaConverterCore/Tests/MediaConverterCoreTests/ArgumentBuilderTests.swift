@@ -51,11 +51,12 @@ final class ArgumentBuilderTests: XCTestCase {
         XCTAssertEqual(mapped(.mkv, .copy), ["0:v?", "0:a?", "0:s?", "0:t?"])
         // No video encoder, nothing to map for it.
         XCTAssertEqual(mapped(.mp4, .none), ["0:a?", "0:s?"])
-        // MP3/FLAC/WAV muxers hold exactly one audio stream, M4A any number.
-        XCTAssertEqual(mapped(.mp3, .none, audio: .mp3), ["0:a:0"])
-        XCTAssertEqual(mapped(.flac, .none, audio: .flac), ["0:a:0"])
-        XCTAssertEqual(mapped(.wav, .none, audio: .pcm), ["0:a:0"])
-        XCTAssertEqual(mapped(.m4a, .none), ["0:a"])
+        // MP3/FLAC/WAV muxers hold exactly one audio stream, M4A any number. The maps are
+        // optional too: a file with no audio stream must not abort at map parsing.
+        XCTAssertEqual(mapped(.mp3, .none, audio: .mp3), ["0:a:0?"])
+        XCTAssertEqual(mapped(.flac, .none, audio: .flac), ["0:a:0?"])
+        XCTAssertEqual(mapped(.wav, .none, audio: .pcm), ["0:a:0?"])
+        XCTAssertEqual(mapped(.m4a, .none), ["0:a?"])
     }
 
     func testPreserveAllStreamsMapsVideoFirstSoTwoPassStatsLineUp() {
@@ -361,7 +362,7 @@ final class ArgumentBuilderTests: XCTestCase {
         s.subtitleDefault = .language("eng")
         let args = ArgumentBuilder.build(settings: s, input: "/in.mkv", output: "/out.m4a",
                                          source: multiTrack)
-        XCTAssertEqual(maps(args[0]), ["0:a"], "subtitles are never mapped into an audio-only file")
+        XCTAssertEqual(maps(args[0]), ["0:a?"], "subtitles are never mapped into an audio-only file")
         XCTAssertFalse(args[0].contains("-c:s"))
         XCTAssertFalse(args[0].contains("-disposition:s"))
     }
