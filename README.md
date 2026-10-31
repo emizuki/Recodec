@@ -6,7 +6,7 @@
 
 **A simple, native macOS media converter — right-click to convert video and audio into iPhone-friendly formats, powered by ffmpeg.**
 
-<img src="docs/screenshot.png" width="760" alt="Recodec with a mixed batch: per-file iPhone-ready verdicts and an HDR clip marked for tone mapping">
+<img src="docs/screenshot.png" width="760" alt="Recodec with a mixed batch: per-file iPhone-ready icons, a footer tally and an HDR clip marked for tone mapping">
 
 </div>
 
@@ -27,7 +27,7 @@ ffmpeg, on the other hand, reads and writes almost anything. Recodec keeps the c
 - **Keep all audio and subtitle tracks** (opt-in, under **More options**) — carry every audio and subtitle stream through (and attachments, into MKV) instead of one of each, transcoding only the first audio track.
 - **HDR → SDR tone mapping** — iPhone and macOS screen recordings in HDR (PQ/HLG) look washed out once shared; Recodec detects them, marks them with an **HDR → SDR** chip in the file list, and tone maps to Rec.709 on VideoToolbox.
   Tone mapping outputs 4:2:0, so 4:2:2 / 4:4:4 sources (ProRes 422 / 4444 HDR) are subsampled to 4:2:0 and any alpha channel is dropped.
-- **Live iPhone-ready verdict, per file** — each row says whether that file comes out iPhone-ready under your current settings (and why not), and the footer counts them ("2 of 4 iPhone-ready"). With **Copy** the answer depends on the source, so a batch can mix both.
+- **Live iPhone-ready verdict** — an icon on each row shows whether that file comes out iPhone-ready under your current settings (hover it for why not), and the footer counts them ("2 of 4 iPhone-ready"). With **Copy** the answer depends on the source, so a batch can mix both.
 - Only codec/container combinations ffmpeg can actually mux are offered (the matrix is verified against ffmpeg, not guessed).
 - **Reasons, not "Conversion failed!":** when ffmpeg cannot convert a file, its row shows the first error ffmpeg logged (the muxer's own sentence), or, for a track the container cannot hold, which track and what to do.
 
@@ -67,7 +67,7 @@ The trade-off is one extra step — `brew install ffmpeg`. Realistically, if you
 
 1. **From Finder:** select one or more media files → right-click → **Convert Media**.
 2. **Or:** open Recodec and drag files in, or click **Add Files…**.
-3. Choose a format, codec, and quality; keep an eye on the **iPhone-ready** badge.
+3. Choose a format, codec, and quality; keep an eye on the **iPhone-ready** verdict in the footer.
 4. Click **Convert**. Converted files are written next to the originals.
 
 Files can be removed individually or with **Clear All** while metadata is loading. Results arriving after a file is removed are ignored.

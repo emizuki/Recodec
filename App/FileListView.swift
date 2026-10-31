@@ -91,7 +91,7 @@ struct FileListView: View {
 }
 
 /// One file: a type glyph, the (middle-truncated) name, codec chips, and on the right what
-/// matters now: whether it ends up iPhone-ready, its progress, or where the result is.
+/// matters now: an iPhone-ready icon (the reason is its tooltip), its progress, or where the result is.
 /// A progress fill runs behind the row while it converts.
 private struct FileRow: View {
     let item: ConversionViewModel.InputItem
@@ -162,11 +162,12 @@ private struct FileRow: View {
         case .pending, .probing:
             Text("Reading…").font(.caption).foregroundStyle(.secondary)
         case .ready:
+            // Icon only: the footer states the verdict in words, so repeating it per row would
+            // duplicate it. The reason a file is not iPhone-ready stays in the row's tooltip.
             if let verdict {
                 VerdictLabel(isReady: verdict.isCompatible,
                              text: verdict.isCompatible ? "iPhone-ready" : (verdict.reason ?? "Not iPhone-compatible"))
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 240, alignment: .trailing)
+                    .labelStyle(.iconOnly)
             }
         case .converting:
             Text("Converting \(Int(item.progress * 100))%")
