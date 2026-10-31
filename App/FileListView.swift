@@ -163,11 +163,15 @@ private struct FileRow: View {
             Text("Reading…").font(.caption).foregroundStyle(.secondary)
         case .ready:
             // Icon only: the footer states the verdict in words, so repeating it per row would
-            // duplicate it. The reason a file is not iPhone-ready stays in the row's tooltip.
+            // duplicate it. The reason a file is not iPhone-ready stays in the row's tooltip. The
+            // icon itself is ~10 pt, too small a target to hover, so the tooltip sits on a 28 pt one.
             if let verdict {
-                VerdictLabel(isReady: verdict.isCompatible,
-                             text: verdict.isCompatible ? "iPhone-ready" : (verdict.reason ?? "Not iPhone-compatible"))
+                let text = verdict.isCompatible ? "iPhone-ready" : (verdict.reason ?? "Not iPhone-compatible")
+                VerdictLabel(isReady: verdict.isCompatible, text: text)
                     .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+                    .help(text)
             }
         case .converting:
             Text("Converting \(Int(item.progress * 100))%")
